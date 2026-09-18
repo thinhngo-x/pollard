@@ -140,8 +140,7 @@ fn add_files(repo: &Repo, node: &str, files: &[PathBuf]) -> Result<String> {
 pub fn step_of(path: &str) -> Option<i64> {
     let name = path.rsplit('/').next()?;
     name.split(|c: char| !c.is_ascii_digit())
-        .filter(|d| !d.is_empty())
-        .next_back()?
+        .rfind(|d| !d.is_empty())?
         .parse()
         .ok()
 }

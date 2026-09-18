@@ -600,7 +600,7 @@ mod tests {
         assert!(unique_b > 0 && unique_b < 5);
 
         assert_eq!(s.gc(&[ma.clone(), mb.clone()]).unwrap(), GcStats::default());
-        let st = s.gc(&[ma.clone()]).unwrap();
+        let st = s.gc(std::slice::from_ref(&ma)).unwrap();
         assert_eq!((st.chunks_removed, st.maps_removed), (unique_b, 1));
         assert_eq!(s.read_blob(&ea.hash).unwrap(), base);
         assert!(s.gc(&[hash_bytes(b"no such manifest")]).is_err());

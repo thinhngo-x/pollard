@@ -281,7 +281,7 @@ fn show_prints_full_record() {
         .map(str::len)
         .collect();
     assert!(
-        hexes.iter().any(|&n| n == 40),
+        hexes.contains(&40),
         "no 40-hex git tree hash in show (§7 code hash):\n{s}"
     );
     assert!(
