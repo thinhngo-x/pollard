@@ -49,3 +49,28 @@ Evidence was gathered on 2026-09-18 with `cargo info` / `cargo search`, `curl ht
 | D-24 | **DECIDED:** ids are `<adj>-<noun>-<counter>`, with the counter per-clone and sequential, and the word pair = `blake3(clone_salt ‖ counter)` over the word lists. `clone_salt` is a random 64-bit value. `pull` refuses a same-id node with a different recipe and names both. | This keeps the spec's readable ids. Collision odds are about 1 in 4M per same-counter pair, and a collision fails loudly instead of silently. |
 | D-25 | **DECIDED:** M4's 1 % change is one contiguous in-place region, and sharing of ≥ 95 % is measured by count and by bytes. | 1 % of bytes spread at random touches nearly every 64 KB chunk, which would make the test meaningless. |
 | D-26 | **DECIDED:** all install commands use `pollard-vcs` (spec §1, §4, §10, and README). | Follows from D-6. |
+
+## E. Lead-dev implementation choices (append-only; lead owns this section)
+
+| # | Decision | Why |
+|---|---|---|
+| L-1 | Hydra-style `key.path=value` launch args (after the script) are applied onto the captured config before hashing, so `train.py seed=3` is part of the resolved config. | Journey D sweeps via CLI args; otherwise every member is a duplicate recipe. Recipe definition unchanged (config = *resolved* config). |
+| L-2 | Op snapshots hold `{head, pending fork_step, nodes, pins}`. `undo` is itself an op (`undo; undo` = redo, as in jj). `run` also records `wc_snapshot` (its code manifest) so `undo` of a run restores the working copy. | `undo` must move `@` back; pending `--step` must not leak across undo. |
+| L-3 | Node gets `note_auto INTEGER` alongside `sweep`. | §3 says auto notes are "flagged auto"; the flag needs a home. **Schema addition, flag for owner.** |
+| L-4 | `siblings --json` = `{"<column header>": {"<row label>": "<cell>" \| null}}` in display order (pandas `read_json` default orient). Stable from M2. | Round-trips through `pd.read_json` / `df.to_json()` unchanged. |
+| L-5 | `sdk`/`hydra` capture: config is known only after launch, so the duplicate check becomes a warning at capture time. | The script writes `POLLARD_CONFIG` after `run` must already have created the node. |
+| L-6 | `env` = blake3 of a JSON record `{lock, freeze, python_version, requires_python, cuda, pep723}` stored as an object; `POLLARD_CUDA` overrides the CUDA/driver string. | Same inputs as §4, but the record can be re-read to compute `env_delta`. |
+| L-7 | `run` exits with the child's exit code; last stdout line is still the node id. | Scripts can use both `$?` and `$(... \| tail -1)`. |
+| L-8 | `tree --metric`: higher-is-better for keys containing acc/score/reward/auc/f1/bleu/precision/recall/map/iou, lower otherwise; ★ marks the ancestry of the best node. Pruned subtrees are hidden, failed subtrees collapse to one line, unless `--all`. | No metric direction in the spec. |
+| L-9 | Sibling cells: blank = `—`; group columns (sweep / seeds) show a config value only if all members agree, else `N values`; metrics show `mean ± std` (sample std). `last_own` cells carry `@step`. | Formatting latitude (§11). |
+| L-10 | `uv lock --check` runs with `--offline`. | Keeps `run` fast and deterministic; a stale lock still fails offline. |
+
+### D-29. Remote layout and sync semantics (M7)
+**AGENT DECISION.** `object_store` 0.14 (`aws` feature) behind a current-thread tokio runtime. Objects and chunk maps are stored individually (`objects/`, `chunkmaps/`, as on disk); chunks go into ≤ 64 MB packs with a text index written after the pack, so a crashed push never leaves an index pointing at missing data. `pull` fetches missing chunks by byte range. `nodes.jsonl` is append-only; each line is a full node version plus deltas, a metrics blob hash and the code-manifest hash, and the last line per id wins (note/status/pins last-writer-wins). Per-clone meta `sync:<id>` stops a clone from re-pushing stale copies over newer remote edits. Appending is read-modify-write (object stores have no append); two concurrent pushes can lose one push's lines until it pushes again. Collision rule: refuse when the same id has a different recipe **and** a different `created_at` (a node whose sdk-captured config changed its recipe after an early push is the same node). Lockfile pin: `idna_adapter = 1.1.0` so the tree avoids icu/yoke-derive releases that need rustc ≥ 1.86.
+
+
+### D-30. Cheaper data hashing: tag and stat modes
+**DEFERRED (next version).** The owner approved it for the release after v1; see SPEC §12. v1 scope, milestones and tests are unchanged.
+- Tag mode: `data = [{ tag = "..." }]`. The hash is blake3 of the tag and no files are read. The user must bump the tag when the data changes.
+- Stat mode: `data = [{ path = "...", mode = "stat" }]`. The manifest uses `(path, size, mtime)`. It misses same-size edits with a preserved mtime.
+- The default stays content hashing for local roots and etag listing for remote roots. The plain-string form stays valid, and there is no node schema change.

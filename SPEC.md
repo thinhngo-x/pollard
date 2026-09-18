@@ -393,6 +393,17 @@ Expected: the sweep is one row in `tree` and one column in `siblings` with mean 
 
 **Sources consulted.** Jujutsu's op log and change-id model ([docs](https://docs.jj-vcs.dev/latest/faq/)); W&B run forking ([docs](https://docs.wandb.ai/models/runs/forking)); Neptune fork-step inheritance and monotonicity ([docs](https://docs.neptune.ai/forking)); Hugging Face Xet chunk-level deduplication ([spec](https://huggingface.co/docs/xet/deduplication)).
 
+## 12. Planned for next version (not v1)
+
+Approved for the release after v1. v1 scope, milestones and acceptance tests are unchanged.
+
+**Cheaper data hashing.** Each `data` root may opt out of content hashing:
+
+- **Tag mode.** `data = [{ tag = "imagenet-2012-v3" }]`. The data hash is blake3 of the tag string, and no files are read. `diff` and `siblings` show the change as `data: v2 → v3`. Caveat: the user is responsible for bumping the tag when the data changes.
+- **Stat mode.** `data = [{ path = "./data", mode = "stat" }]`. The manifest uses `(path, size, mtime)` and reads no content. It detects added, removed and resized files, but misses same-size edits with a preserved mtime.
+
+The default stays as it is: content hashing for local roots and etag listing for remote roots. The plain-string form `data = ["./data"]` remains valid. The node schema is unchanged, because `data` is still one blake3 hash.
+
 ## Revision log (v2 → v3)
 
 Decisions behind each change: `docs/DECISIONS.md`.
@@ -422,3 +433,4 @@ Decisions behind each change: `docs/DECISIONS.md`.
 - **§9 M6.** The tree-equality test is restricted to a clean HEAD and compares the tree with `.pollard-recipe.json` removed.
 - **§10 Journey A.** `uv tool install pollard-vcs`.
 - **§11.** All open questions resolved. `gearhash` vs `fastcdc` removed from agent latitude (decided). Polling recommended for JSONL tailing.
+- **§12 (new).** "Planned for next version": tag-mode and stat-mode data roots. v1 scope, milestones and tests are unchanged.
