@@ -22,7 +22,7 @@ thiserror = "2"
 ignore = "0.4"
 fs4 = { version = "0.13", features = ["sync"] }
 ctrlc = { version = "3", features = ["termination"] }
-diffy = "0.4"
+diffy = "0.5"
 zstd = "0.14"
 
 [dev-dependencies]
