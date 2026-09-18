@@ -32,16 +32,28 @@ fn remote_err(e: pollard_remote::Error) -> crate::Error {
 
 fn open(repo: &Repo) -> Result<Remote> {
     let url = repo.config.remote.as_deref().ok_or_else(|| {
-        msg(format!("no remote configured: set `remote = \"<path or s3://bucket/prefix>\"` in {}", repo.dot.join("config.toml").display()))
+        msg(format!(
+            "no remote configured: set `remote = \"<path or s3://bucket/prefix>\"` in {}",
+            repo.dot.join("config.toml").display()
+        ))
     })?;
-    let url = if url.contains("://") || url.starts_with('/') { url.to_string() } else { repo.root.join(url).display().to_string() };
+    let url = if url.contains("://") || url.starts_with('/') {
+        url.to_string()
+    } else {
+        repo.root.join(url).display().to_string()
+    };
     Remote::open(&url).map_err(remote_err)
 }
 
 fn line_of(repo: &Repo, n: &Node) -> Result<(String, String)> {
-    let mut st = repo.db.prepare("SELECT key, step, value, ts FROM metrics WHERE node_id=?1 ORDER BY key, step, ts")?;
-    let rows: Vec<(String, i64, f64, String)> =
-        st.query_map([&n.id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<rusqlite::Result<_>>()?;
+    let mut st = repo.db.prepare(
+        "SELECT key, step, value, ts FROM metrics WHERE node_id=?1 ORDER BY key, step, ts",
+    )?;
+    let rows: Vec<(String, i64, f64, String)> = st
+        .query_map([&n.id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
     let metrics = match rows.is_empty() {
         true => None,
         false => Some(repo.objects.put_bytes(&serde_json::to_vec(&rows)?)?.0),
@@ -61,14 +73,18 @@ type RemoteLines = Vec<(String, String, Line)>;
 
 /// Raw `nodes.jsonl` and the latest line per id, in first-seen order.
 fn remote_nodes(remote: &Remote) -> Result<(Vec<u8>, RemoteLines)> {
-    let raw = remote.get("nodes.jsonl").map_err(remote_err)?.unwrap_or_default();
+    let raw = remote
+        .get("nodes.jsonl")
+        .map_err(remote_err)?
+        .unwrap_or_default();
     let mut order: Vec<String> = vec![];
     let mut latest: HashMap<String, (String, Line)> = HashMap::new();
     for (i, text) in String::from_utf8_lossy(&raw).lines().enumerate() {
         if text.trim().is_empty() {
             continue;
         }
-        let line: Line = serde_json::from_str(text).map_err(|e| msg(format!("remote nodes.jsonl line {}: {e}", i + 1)))?;
+        let line: Line = serde_json::from_str(text)
+            .map_err(|e| msg(format!("remote nodes.jsonl line {}: {e}", i + 1)))?;
         let id = line.node.id.clone();
         if !latest.contains_key(&id) {
             order.push(id.clone());
@@ -84,7 +100,9 @@ fn remote_nodes(remote: &Remote) -> Result<(Vec<u8>, RemoteLines)> {
 
 fn local_pins(repo: &Repo) -> Result<BTreeMap<String, String>> {
     let mut st = repo.db.prepare("SELECT name, node_id FROM pins")?;
-    let v = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+    let v = st
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
     Ok(v)
 }
 
@@ -102,18 +120,27 @@ pub fn push(repo: &Repo) -> Result<SyncStats> {
     let remote = open(repo)?;
     let _lock = repo.lock()?;
     let (mut raw, remote_lines) = remote_nodes(&remote)?;
-    let remote_hash: HashMap<&str, &str> = remote_lines.iter().map(|(id, h, _)| (id.as_str(), h.as_str())).collect();
+    let remote_hash: HashMap<&str, &str> = remote_lines
+        .iter()
+        .map(|(id, h, _)| (id.as_str(), h.as_str()))
+        .collect();
     let mut new = vec![];
+    let mut markers = vec![];
     for n in node::all(&repo.db)? {
         let (h, json) = line_of(repo, &n)?;
         let key = format!("sync:{}", n.id);
         let synced = repo.meta(&key)?;
-        if remote_hash.get(n.id.as_str()) != Some(&h.as_str()) && synced.as_deref() != Some(h.as_str()) {
+        if remote_hash.get(n.id.as_str()) != Some(&h.as_str())
+            && synced.as_deref() != Some(h.as_str())
+        {
             new.push(json);
         }
-        repo.set_meta(&key, &h)?;
+        markers.push((key, h));
     }
-    let mut stats = SyncStats { blobs: remote.push_blobs(&repo.objects).map_err(remote_err)?, ..Default::default() };
+    let mut stats = SyncStats {
+        blobs: remote.push_blobs(&repo.objects).map_err(remote_err)?,
+        ..Default::default()
+    };
     if !new.is_empty() {
         if !raw.is_empty() && !raw.ends_with(b"\n") {
             raw.push(b'\n');
@@ -129,10 +156,15 @@ pub fn push(repo: &Repo) -> Result<SyncStats> {
     let pins = serde_json::to_vec_pretty(&local_pins(repo)?)?;
     let ph = crate::b3(&pins);
     let remote_pins = remote.get("pins.json").map_err(remote_err)?;
-    if remote_pins.as_deref().map(crate::b3).as_deref() != Some(ph.as_str()) && repo.meta("sync:pins")?.as_deref() != Some(ph.as_str()) {
+    if remote_pins.as_deref().map(crate::b3).as_deref() != Some(ph.as_str())
+        && repo.meta("sync:pins")?.as_deref() != Some(ph.as_str())
+    {
         stats.blobs.bytes += pins.len() as u64;
         remote.put("pins.json", pins).map_err(remote_err)?;
         stats.pins = true;
+    }
+    for (key, hash) in markers {
+        repo.set_meta(&key, &hash)?;
     }
     repo.set_meta("sync:pins", &ph)?;
     Ok(stats)
@@ -165,7 +197,10 @@ pub fn pull(repo: &mut Repo) -> Result<(OpRecord, SyncStats)> {
                 None => (true, false),
                 Some(local) => {
                     let (lh, _) = line_of(repo, &local)?;
-                    (lh != *h && repo.meta(&key)?.as_deref() == Some(lh.as_str()), lh == *h)
+                    (
+                        lh != *h && repo.meta(&key)?.as_deref() == Some(lh.as_str()),
+                        lh == *h,
+                    )
                 }
             };
             if replace {
@@ -184,9 +219,13 @@ pub fn pull(repo: &mut Repo) -> Result<(OpRecord, SyncStats)> {
             if synced.as_deref() == Some(mh.as_str()) || (synced.is_none() && mine.is_empty()) {
                 repo.db.execute("DELETE FROM pins", [])?;
                 for (name, id) in &remote_pins {
-                    repo.db.execute("INSERT INTO pins(name,node_id) VALUES(?1,?2)", [name, id])?;
+                    repo.db
+                        .execute("INSERT INTO pins(name,node_id) VALUES(?1,?2)", [name, id])?;
                 }
-                repo.set_meta("sync:pins", &crate::b3(&serde_json::to_vec_pretty(&remote_pins)?))?;
+                repo.set_meta(
+                    "sync:pins",
+                    &crate::b3(&serde_json::to_vec_pretty(&remote_pins)?),
+                )?;
                 stats.pins = remote_pins != mine;
             }
         }
@@ -201,13 +240,21 @@ fn apply_line(repo: &Repo, l: &Line) -> Result<()> {
     l.node.insert(&repo.db)?;
     delta::store(repo, id, &l.deltas)?;
     if let Some(m) = &l.code_manifest {
-        repo.db.execute("INSERT OR IGNORE INTO code_trees(git_tree, manifest_hash) VALUES(?1,?2)", [&l.node.code, m])?;
+        repo.db.execute(
+            "INSERT OR IGNORE INTO code_trees(git_tree, manifest_hash) VALUES(?1,?2)",
+            [&l.node.code, m],
+        )?;
     }
-    repo.db.execute("DELETE FROM metrics WHERE node_id=?1", [id])?;
+    repo.db
+        .execute("DELETE FROM metrics WHERE node_id=?1", [id])?;
     if let Some(h) = &l.metrics {
-        let rows: Vec<(String, i64, f64, String)> = serde_json::from_slice(&repo.objects.read_blob(h)?)?;
+        let rows: Vec<(String, i64, f64, String)> =
+            serde_json::from_slice(&repo.objects.read_blob(h)?)?;
         for (k, s, v, ts) in rows {
-            repo.db.execute("INSERT INTO metrics(node_id,key,step,value,ts) VALUES(?1,?2,?3,?4,?5)", params![id, k, s, v, ts])?;
+            repo.db.execute(
+                "INSERT INTO metrics(node_id,key,step,value,ts) VALUES(?1,?2,?3,?4,?5)",
+                params![id, k, s, v, ts],
+            )?;
         }
     }
     Ok(())
@@ -279,8 +326,14 @@ mod tests {
         let (_, s) = pull(&mut b).unwrap();
         assert_eq!(s.nodes, 1);
         assert_eq!(b.node("p").unwrap().note.as_deref(), Some("orig"));
-        assert_eq!(crate::metrics::series(&b.db, "p", "loss").unwrap(), [(1, 2.5)]);
-        assert_eq!(local_pins(&b).unwrap().get("best").map(String::as_str), Some("p"));
+        assert_eq!(
+            crate::metrics::series(&b.db, "p", "loss").unwrap(),
+            [(1, 2.5)]
+        );
+        assert_eq!(
+            local_pins(&b).unwrap().get("best").map(String::as_str),
+            Some("p")
+        );
 
         mk(&a, "c1", Some("p"), "r1");
         mk(&b, "c2", Some("p"), "r2");
@@ -300,7 +353,8 @@ mod tests {
         assert_eq!(listing(&remote), before);
 
         // note: last writer wins; a clone that did not edit does not clobber it
-        b.db.execute("UPDATE nodes SET note='renamed' WHERE id='p'", []).unwrap();
+        b.db.execute("UPDATE nodes SET note='renamed' WHERE id='p'", [])
+            .unwrap();
         push(&b).unwrap();
         push(&a).unwrap();
         pull(&mut a).unwrap();

@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    # Linux only: SPEC.md §11 lists Windows support as an explicit v1 non-goal, and there's
+    # no macOS runner budget yet either. Revisit if that changes.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: cargo build
+        run: cargo build --workspace
+
+      - name: cargo test
+        run: cargo test --workspace -- --include-ignored
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        # maturin (bindings = "bin") compiles the pollard-cli binary, so the wheel build
+        # needs a Rust toolchain too.
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.10"
+
+      # No tests under python/ yet (only python/src/pollard) - just verify the wheel builds.
+      # Add a `uv run pytest` step here once python/tests exists.
+      - name: uv build
+        working-directory: python
+        run: uv build

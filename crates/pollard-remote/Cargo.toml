@@ -1,13 +1,16 @@
 [package]
 name = "pollard-remote"
+description = "Remote sync for pollard: push/pull nodes, objects and chunks over object_store."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
 
 [dependencies]
 futures = "0.3.34"
 object_store = { version = "0.14.2", features = ["aws"] }
-pollard-objects = { version = "0.1.0", path = "../pollard-objects" }
+pollard-objects = { version = "0.1.0-alpha.1", path = "../pollard-objects" }
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt"] }
 

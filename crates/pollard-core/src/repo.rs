@@ -58,8 +58,15 @@ impl Repo {
         // add .pollard/ to .gitignore
         let gi = root.join(".gitignore");
         let cur = fs::read_to_string(&gi).unwrap_or_default();
-        if !cur.lines().any(|l| l.trim() == ".pollard/" || l.trim() == ".pollard") {
-            let sep = if cur.is_empty() || cur.ends_with('\n') { "" } else { "\n" };
+        if !cur
+            .lines()
+            .any(|l| l.trim() == ".pollard/" || l.trim() == ".pollard")
+        {
+            let sep = if cur.is_empty() || cur.ends_with('\n') {
+                ""
+            } else {
+                "\n"
+            };
             fs::write(&gi, format!("{cur}{sep}.pollard/\n")).at(&gi)?;
         }
         let repo = Repo::open_at(root)?;
@@ -94,22 +101,40 @@ impl Repo {
         db.busy_timeout(std::time::Duration::from_secs(30))?;
         db.execute_batch(SCHEMA)?;
         let objects = pollard_objects::Store::new(&dot);
-        Ok(Repo { root, dot, db, config, objects, cmdline: String::new() })
+        Ok(Repo {
+            root,
+            dot,
+            db,
+            config,
+            objects,
+            cmdline: String::new(),
+        })
     }
 
     /// Exclusive writer lock on `.pollard/lock`.
     pub fn lock(&self) -> Result<Lock> {
         let p = self.dot.join("lock");
-        let f = File::options().create(true).truncate(false).write(true).open(&p).at(&p)?;
+        let f = File::options()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&p)
+            .at(&p)?;
         fs4::fs_std::FileExt::lock_exclusive(&f).at(&p)?;
         Ok(Lock(f))
     }
 
     pub fn meta(&self, key: &str) -> Result<Option<String>> {
-        Ok(self.db.query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0)).optional()?)
+        Ok(self
+            .db
+            .query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0))
+            .optional()?)
     }
     pub fn set_meta(&self, key: &str, v: &str) -> Result<()> {
-        self.db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?1,?2)", [key, v])?;
+        self.db.execute(
+            "INSERT OR REPLACE INTO meta(key,value) VALUES(?1,?2)",
+            [key, v],
+        )?;
         Ok(())
     }
 
@@ -132,7 +157,10 @@ impl Repo {
     /// Next unused node id; bumps the per-clone counter.
     pub fn next_id(&self) -> Result<String> {
         let salt = self.meta("salt")?.unwrap_or_default();
-        let mut c: u64 = self.meta("counter")?.and_then(|s| s.parse().ok()).unwrap_or(1);
+        let mut c: u64 = self
+            .meta("counter")?
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1);
         loop {
             let id = crate::ids::make(&salt, c);
             c += 1;
@@ -150,23 +178,41 @@ impl Repo {
     /// Resolve a full id, `@`, `@-`, a pin name, or a unique prefix.
     pub fn resolve(&self, arg: &str) -> Result<String> {
         if arg == "@" || arg == "@-" {
-            let head = self.head()?.ok_or_else(|| msg("no current node (run or fork first)"))?;
+            let head = self
+                .head()?
+                .ok_or_else(|| msg("no current node (run or fork first)"))?;
             if arg == "@" {
                 return Ok(head);
             }
-            return self.node(&head)?.parent.ok_or_else(|| msg(format!("{head} is a root; '@-' has no node")));
+            return self
+                .node(&head)?
+                .parent
+                .ok_or_else(|| msg(format!("{head} is a root; '@-' has no node")));
         }
         if node::get(&self.db, arg)?.is_some() {
             return Ok(arg.into());
         }
-        if let Some(id) =
-            self.db.query_row("SELECT node_id FROM pins WHERE name=?1", [arg], |r| r.get::<_, String>(0)).optional()?
+        if let Some(id) = self
+            .db
+            .query_row("SELECT node_id FROM pins WHERE name=?1", [arg], |r| {
+                r.get::<_, String>(0)
+            })
+            .optional()?
         {
             return Ok(id);
         }
-        let mut st = self.db.prepare("SELECT id FROM nodes WHERE id LIKE ?1 ESCAPE '\\' LIMIT 6")?;
-        let pat = format!("{}%", arg.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
-        let m: Vec<String> = st.query_map([pat], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        let mut st = self
+            .db
+            .prepare("SELECT id FROM nodes WHERE id LIKE ?1 ESCAPE '\\' LIMIT 6")?;
+        let pat = format!(
+            "{}%",
+            arg.replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        );
+        let m: Vec<String> = st
+            .query_map([pat], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
         match m.len() {
             0 => Err(Error::UnknownNode(arg.into())),
             1 => Ok(m[0].clone()),
@@ -176,8 +222,12 @@ impl Repo {
 
     /// Pin names pointing at `id`.
     pub fn pins_of(&self, id: &str) -> Result<Vec<String>> {
-        let mut st = self.db.prepare("SELECT name FROM pins WHERE node_id=?1 ORDER BY name")?;
-        let v = st.query_map([id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        let mut st = self
+            .db
+            .prepare("SELECT name FROM pins WHERE node_id=?1 ORDER BY name")?;
+        let v = st
+            .query_map([id], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
         Ok(v)
     }
 }

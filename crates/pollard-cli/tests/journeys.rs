@@ -47,7 +47,9 @@ struct J {
 
 fn po_env(r: &Repo, args: &[&str], env: &[(&str, &str)]) -> Out {
     let mut c = r.cmd_in(&r.root, &bin(), args);
-    for (k, v) in env { c.env(k, v); }
+    for (k, v) in env {
+        c.env(k, v);
+    }
     r.exec(c)
 }
 
@@ -72,28 +74,54 @@ fn journey_a() -> J {
     r.write("REPORT.md", "# Report\n");
     r.write(".gitignore", ".venv/\n__pycache__/\n");
     write_200_files(&r);
-    for i in 0..20 { r.write(&format!("data/shard{i}.bin"), prng_bytes(MB, i)); }
+    for i in 0..20 {
+        r.write(&format!("data/shard{i}.bin"), prng_bytes(MB, i));
+    }
     r.sh("uv lock --quiet");
     git_init_commit(&r);
 
     let o = r.ok(&["init", "--from-git"]);
     // Timing budget: spec < 5 s (release; see common::budget). Our data/ is 20 MB, not 10 GB (Q7).
-    assert!(o.elapsed < budget(std::time::Duration::from_secs(5)), "init --from-git took {:?} (spec: < 5 s)", o.elapsed);
+    assert!(
+        o.elapsed < budget(std::time::Duration::from_secs(5)),
+        "init --from-git took {:?} (spec: < 5 s)",
+        o.elapsed
+    );
     let root = o.last_line();
     assert!(is_node_id(&root), "{o}");
 
     let o = po_env(&r, &["run", "-m", "baseline", "train.py"], &[]);
     assert!(o.ok(), "{o}");
     let warm = o.last_line();
-    assert!(o.stdout.lines().next().is_some_and(|l| l.contains(&warm)), "run must print the node id first, before the script starts:\n{o}");
-    assert!(o.all().contains("uv run train.py"), "launch line should say `uv run train.py`:\n{o}");
+    assert!(
+        o.stdout.lines().next().is_some_and(|l| l.contains(&warm)),
+        "run must print the node id first, before the script starts:\n{o}"
+    );
+    assert!(
+        o.all().contains("uv run train.py"),
+        "launch line should say `uv run train.py`:\n{o}"
+    );
 
     let t = r.ok(&["tree"]).stdout;
     assert_eq!(ids_in(&t).len(), 2, "tree should show two nodes:\n{t}");
     let s = r.ok(&["show", &warm]).stdout;
-    assert!(s.contains("done") && s.contains("val_loss"), "warm should be done with a final val_loss:\n{s}");
-    assert!(s.contains("step50000") || s.contains("50k") || s.contains("50000"), "warm's checkpoint missing from show:\n{s}");
-    J { r, root, warm, cold: String::new(), red: String::new(), blue: String::new(), gold: String::new() }
+    assert!(
+        s.contains("done") && s.contains("val_loss"),
+        "warm should be done with a final val_loss:\n{s}"
+    );
+    assert!(
+        s.contains("step50000") || s.contains("50k") || s.contains("50000"),
+        "warm's checkpoint missing from show:\n{s}"
+    );
+    J {
+        r,
+        root,
+        warm,
+        cold: String::new(),
+        red: String::new(),
+        blue: String::new(),
+        gold: String::new(),
+    }
 }
 
 /// Journey B: the exploration loop.
@@ -101,31 +129,67 @@ fn journey_b() -> J {
     let mut j = journey_a();
     let r = &j.r;
     r.ok(&["fork", &j.warm]);
-    r.write("config.yaml", r.read("config.yaml").replace("lr: 3e-4", "lr: 1e-4"));
+    r.write(
+        "config.yaml",
+        r.read("config.yaml").replace("lr: 3e-4", "lr: 1e-4"),
+    );
     j.cold = run_train(r, &[], &[]);
     let s = r.ok(&["show", &j.cold]).stdout;
-    assert!(s.contains("auto") && s.contains("lr"), "cold should carry an auto note about lr:\n{s}");
+    assert!(
+        s.contains("auto") && s.contains("lr"),
+        "cold should carry an auto note about lr:\n{s}"
+    );
     assert!(s.contains(&j.warm), "cold's parent should be warm:\n{s}");
 
     r.ok(&["fork", &j.warm]);
-    assert!(r.read("config.yaml").contains("lr: 3e-4"), "fork warm did not restore config");
-    r.write("model.py", "class Attention: pass\nclass Model:\n    depth = 24\n");
+    assert!(
+        r.read("config.yaml").contains("lr: 3e-4"),
+        "fork warm did not restore config"
+    );
+    r.write(
+        "model.py",
+        "class Attention: pass\nclass Model:\n    depth = 24\n",
+    );
     r.write("config.yaml", "lr: 3e-4\ndepth: 24\n");
     r.write("REPORT.md", "# Report\nTried attention.\n");
     j.red = run_train(r, &["-m", "deeper + attn"], &[]);
     let sib = r.ok(&["siblings", &j.warm, "--metric", "val_loss"]).stdout;
-    assert!(sib.contains(&j.cold) && sib.contains(&j.red), "one column per child expected:\n{sib}");
-    assert!(!sib.contains("REPORT"), "REPORT.md edit leaked into siblings:\n{sib}");
-    assert!(sib.contains("model.py") && sib.contains("depth"), "red's code/config deltas missing:\n{sib}");
+    assert!(
+        sib.contains(&j.cold) && sib.contains(&j.red),
+        "one column per child expected:\n{sib}"
+    );
+    assert!(
+        !sib.contains("REPORT"),
+        "REPORT.md edit leaked into siblings:\n{sib}"
+    );
+    assert!(
+        sib.contains("model.py") && sib.contains("depth"),
+        "red's code/config deltas missing:\n{sib}"
+    );
 
     r.ok(&["fork", &j.red]);
-    assert_eq!(r.read("REPORT.md"), "# Report\nTried attention.\n", "fork moved an off-tree file");
+    assert_eq!(
+        r.read("REPORT.md"),
+        "# Report\nTried attention.\n",
+        "fork moved an off-tree file"
+    );
     let before = r.snapshot();
     let o = r.ok(&["apply", &j.cold]);
-    let changed: Vec<_> = r.snapshot().into_iter().filter(|f| !before.contains(f)).map(|f| f.0).collect();
-    assert_eq!(changed, vec!["config.yaml".to_string()], "apply should touch only config.yaml:\n{o}");
+    let changed: Vec<_> = r
+        .snapshot()
+        .into_iter()
+        .filter(|f| !before.contains(f))
+        .map(|f| f.0)
+        .collect();
+    assert_eq!(
+        changed,
+        vec!["config.yaml".to_string()],
+        "apply should touch only config.yaml:\n{o}"
+    );
     assert!(!o.all().to_lowercase().contains("conflict"), "{o}");
-    assert!(r.read("config.yaml").contains("lr: 1e-4") && r.read("config.yaml").contains("depth: 24"));
+    assert!(
+        r.read("config.yaml").contains("lr: 1e-4") && r.read("config.yaml").contains("depth: 24")
+    );
     // Maya kills it at 41,200 with Ctrl-C (SIGINT to pollard's process group). `run` may exit
     // non-zero, but must still print the node id last.
     let mut c = r.cmd_in(&r.root, &bin(), &["run", "-m", "combine", "train.py"]);
@@ -137,11 +201,25 @@ fn journey_b() -> J {
     let o = r.ok(&["prune", &j.cold]);
     assert_eq!(o.last_line(), j.cold);
     let t = r.ok(&["tree"]).stdout;
-    assert!(!t.contains(&j.cold), "pruned node visible in default tree:\n{t}");
-    assert!(r.ok(&["tree", "--all"]).stdout.contains(&j.cold), "pruned node missing from tree --all");
-    assert!(r.ok(&["log", &j.cold, "--key", "val_loss"]).stdout.contains("50000"), "pruned metrics must stay queryable");
+    assert!(
+        !t.contains(&j.cold),
+        "pruned node visible in default tree:\n{t}"
+    );
+    assert!(
+        r.ok(&["tree", "--all"]).stdout.contains(&j.cold),
+        "pruned node missing from tree --all"
+    );
+    assert!(
+        r.ok(&["log", &j.cold, "--key", "val_loss"])
+            .stdout
+            .contains("50000"),
+        "pruned metrics must stay queryable"
+    );
     r.ok(&["undo"]);
-    assert!(!r.ok(&["show", &j.cold]).stdout.contains("pruned"), "undo did not bring cold back");
+    assert!(
+        !r.ok(&["show", &j.cold]).stdout.contains("pruned"),
+        "undo did not bring cold back"
+    );
     r.ok(&["prune", &j.cold]);
     j
 }
@@ -155,7 +233,10 @@ fn journey_a_init_summary_lists_offtree_files() {
     r.write("REPORT.md", "# Report\n");
     git_init_commit(&r);
     let o = r.ok(&["init", "--from-git"]);
-    assert!(o.all().contains("REPORT.md"), "init summary should list the off-tree REPORT.md:\n{o}");
+    assert!(
+        o.all().contains("REPORT.md"),
+        "init summary should list the off-tree REPORT.md:\n{o}"
+    );
 }
 
 #[test]
@@ -174,26 +255,61 @@ fn journey_c() -> J {
     let r = &j.r;
     let s = r.ok(&["show", &j.blue]).stdout;
     assert!(s.contains("killed"), "blue should be `killed`:\n{s}");
-    assert!(s.contains("41200") || s.contains("41,200") || s.contains("41.2k"), "last step 41,200 missing:\n{s}");
+    assert!(
+        s.contains("41200") || s.contains("41,200") || s.contains("41.2k"),
+        "last step 41,200 missing:\n{s}"
+    );
     for k in ["10000", "20000", "30000", "40000"] {
         let short = format!("{}k", &k[..2]);
-        assert!(s.contains(k) || s.contains(&short), "checkpoint {k} missing from show:\n{s}");
+        assert!(
+            s.contains(k) || s.contains(&short),
+            "checkpoint {k} missing from show:\n{s}"
+        );
     }
-    assert!(s.contains(&format!("pollard fork {} && uv sync --frozen", j.blue)), "reproduce line missing:\n{s}");
+    assert!(
+        s.contains(&format!("pollard fork {} && uv sync --frozen", j.blue)),
+        "reproduce line missing:\n{s}"
+    );
 
     let o = r.ok(&["fork", &j.blue, "--step", "30000"]);
-    assert!(r.root.join("ckpt/step30000.pt").exists(), "ckpt/step30000.pt not restored:\n{o}");
-    assert!(o.all().contains("30000"), "fork output should report fork_step=30000:\n{o}");
-    r.write("config.yaml", r.read("config.yaml").replace("lr: 1e-4", "lr: 5e-5"));
+    assert!(
+        r.root.join("ckpt/step30000.pt").exists(),
+        "ckpt/step30000.pt not restored:\n{o}"
+    );
+    assert!(
+        o.all().contains("30000"),
+        "fork output should report fork_step=30000:\n{o}"
+    );
+    r.write(
+        "config.yaml",
+        r.read("config.yaml").replace("lr: 1e-4", "lr: 5e-5"),
+    );
     j.gold = run_train(r, &["-m", "resume from 30k, lower lr"], &[]);
-    let pts: Vec<(i64, f64)> = r.ok(&["log", &j.gold, "--key", "val_loss"]).stdout.lines()
-        .filter_map(|l| { let n = numbers(l); (n.len() >= 2 && n[0] > 0.0 && n[0].fract() == 0.0).then(|| (n[0] as i64, n[1])) }).collect();
+    let pts: Vec<(i64, f64)> = r
+        .ok(&["log", &j.gold, "--key", "val_loss"])
+        .stdout
+        .lines()
+        .filter_map(|l| {
+            let n = numbers(l);
+            (n.len() >= 2 && n[0] > 0.0 && n[0].fract() == 0.0).then(|| (n[0] as i64, n[1]))
+        })
+        .collect();
     let steps: Vec<i64> = pts.iter().map(|p| p.0).collect();
-    assert_eq!(steps, (1..=500).map(|i| i * 100).collect::<Vec<_>>(), "gold's log is not one continuous 100..50000 curve");
+    assert_eq!(
+        steps,
+        (1..=500).map(|i| i * 100).collect::<Vec<_>>(),
+        "gold's log is not one continuous 100..50000 curve"
+    );
     let t = r.ok(&["tree"]).stdout;
-    assert!(line_with(&t, &j.gold).is_some_and(|l| l.contains("@30000")), "tree should label gold's edge @30000:\n{t}");
+    assert!(
+        line_with(&t, &j.gold).is_some_and(|l| l.contains("@30000")),
+        "tree should label gold's edge @30000:\n{t}"
+    );
     let o = r.ok(&["fork", &j.gold, "--step", "20000"]);
-    assert!(o.all().contains(&j.blue), "forking gold at 20k should re-parent to blue with a notice:\n{o}");
+    assert!(
+        o.all().contains(&j.blue),
+        "forking gold at 20k should re-parent to blue with a notice:\n{o}"
+    );
     r.ok(&["fork", &j.gold]);
     j
 }
@@ -209,23 +325,49 @@ fn journey_d_sweep_pin_share_publish() {
     let j = journey_c();
     let r = &j.r;
     let remote = tempfile::tempdir().unwrap();
-    r.set_config("remote", &format!("{:?}", remote.path().display().to_string()));
+    r.set_config(
+        "remote",
+        &format!("{:?}", remote.path().display().to_string()),
+    );
     let mut members = vec![];
     for s in 1..=16 {
         // seed is written into config.yaml too: the command line alone is not part of the recipe (Q8).
         r.write("config.yaml", format!("lr: 5e-5\ndepth: 24\nseed: {s}\n"));
         let seed_arg = format!("seed={s}");
-        let o = po_env(r, &["run", "--sweep", "seeds", "-m", &format!("seed {s}"), "--parent", &j.gold, "train.py", &seed_arg], &[]);
+        let o = po_env(
+            r,
+            &[
+                "run",
+                "--sweep",
+                "seeds",
+                "-m",
+                &format!("seed {s}"),
+                "--parent",
+                &j.gold,
+                "train.py",
+                &seed_arg,
+            ],
+            &[],
+        );
         assert!(o.ok(), "{o}");
         members.push(o.last_line());
     }
     let t = r.ok(&["tree", "--metric", "val_loss"]).stdout;
-    assert!(members.iter().all(|m| !t.contains(m.as_str())), "sweep members listed individually:\n{t}");
+    assert!(
+        members.iter().all(|m| !t.contains(m.as_str())),
+        "sweep members listed individually:\n{t}"
+    );
     let sweep_rows: Vec<_> = t.lines().filter(|l| l.contains("seeds")).collect();
     assert_eq!(sweep_rows.len(), 1, "sweep should be one tree row:\n{t}");
-    assert!(sweep_rows[0].contains("16") && sweep_rows[0].contains('±'), "sweep row lacks `16 runs` and mean ± std:\n{t}");
+    assert!(
+        sweep_rows[0].contains("16") && sweep_rows[0].contains('±'),
+        "sweep row lacks `16 runs` and mean ± std:\n{t}"
+    );
     let sib = r.ok(&["siblings", &j.gold, "--metric", "val_loss"]).stdout;
-    assert!(sib.contains('±') && members.iter().all(|m| !sib.contains(m.as_str())), "sweep not one sibling column:\n{sib}");
+    assert!(
+        sib.contains('±') && members.iter().all(|m| !sib.contains(m.as_str())),
+        "sweep not one sibling column:\n{sib}"
+    );
 
     let o = r.ok(&["pin", &j.gold, "paper-v1"]);
     assert_eq!(o.last_line(), j.gold);
@@ -236,25 +378,50 @@ fn journey_d_sweep_pin_share_publish() {
 
     let head = git(r, "rev-parse HEAD");
     r.write("REPORT.md", "# Report\nFINAL\n");
-    r.ok(&["export", "--path", &format!("{}..paper-v1", j.root), "--branch", "paper-v1"]);
+    r.ok(&[
+        "export",
+        "--path",
+        &format!("{}..paper-v1", j.root),
+        "--branch",
+        "paper-v1",
+    ]);
     let revs = git(r, "rev-list paper-v1 ^main");
-    let n = if revs.lines().count() == 5 { 5 } else { git(r, "rev-list paper-v1").lines().count() };
-    assert_eq!(n, 5, "expected a 5-commit linear branch (root, warm, red, blue, gold)");
+    let n = if revs.lines().count() == 5 {
+        5
+    } else {
+        git(r, "rev-list paper-v1").lines().count()
+    };
+    assert_eq!(
+        n, 5,
+        "expected a 5-commit linear branch (root, warm, red, blue, gold)"
+    );
     assert_eq!(git(r, "rev-list --min-parents=2 --count paper-v1"), "0");
     for rev in git(r, "rev-list -n 5 paper-v1").lines() {
-        assert!(git(r, &format!("show {rev}:REPORT.md")).contains("FINAL"), "commit {rev} lacks the current REPORT.md");
+        assert!(
+            git(r, &format!("show {rev}:REPORT.md")).contains("FINAL"),
+            "commit {rev} lacks the current REPORT.md"
+        );
         git(r, &format!("show {rev}:.pollard-recipe.json"));
     }
-    assert!(git(r, "log -1 --format=%s paper-v1").contains(&j.gold), "tip commit subject lacks gold's id");
+    assert!(
+        git(r, "log -1 --format=%s paper-v1").contains(&j.gold),
+        "tip commit subject lacks gold's id"
+    );
     assert_eq!(git(r, "rev-parse HEAD"), head, "HEAD moved");
     let _ = (&j.warm, &j.red, &j.blue, &j.cold);
 
     // Collaborator: checkout paper-v1 elsewhere, uv sync --frozen, pollard init --from-git.
     let collab = Repo::bare();
-    collab.sh(&format!("git clone -q --branch paper-v1 {} . && uv sync --frozen --quiet", r.root.display()));
+    collab.sh(&format!(
+        "git clone -q --branch paper-v1 {} . && uv sync --frozen --quiet",
+        r.root.display()
+    ));
     let o = collab.ok(&["init", "--from-git"]);
     assert!(is_node_id(&o.last_line()), "{o}");
-    assert!(collab.read("config.yaml").contains("lr: 5e-5"), "collaborator does not have gold's config");
+    assert!(
+        collab.read("config.yaml").contains("lr: 5e-5"),
+        "collaborator does not have gold's config"
+    );
 }
 
 fn listing(dir: &std::path::Path) -> Vec<(String, u64)> {
@@ -262,7 +429,11 @@ fn listing(dir: &std::path::Path) -> Vec<(String, u64)> {
     fn go(d: &std::path::Path, v: &mut Vec<(String, u64)>) {
         for e in std::fs::read_dir(d).unwrap().flatten() {
             let p = e.path();
-            if p.is_dir() { go(&p, v) } else { v.push((p.display().to_string(), p.metadata().unwrap().len())) }
+            if p.is_dir() {
+                go(&p, v)
+            } else {
+                v.push((p.display().to_string(), p.metadata().unwrap().len()))
+            }
         }
     }
     go(dir, &mut v);

@@ -15,7 +15,20 @@ pub struct Opts {
 /// Higher is better for accuracy-like keys; lower otherwise (losses, errors, perplexity).
 pub fn higher_is_better(key: &str) -> bool {
     let k = key.to_lowercase();
-    ["acc", "score", "reward", "auc", "f1", "bleu", "precision", "recall", "map", "iou"].iter().any(|s| k.contains(s))
+    [
+        "acc",
+        "score",
+        "reward",
+        "auc",
+        "f1",
+        "bleu",
+        "precision",
+        "recall",
+        "map",
+        "iou",
+    ]
+    .iter()
+    .any(|s| k.contains(s))
 }
 
 pub fn render(repo: &Repo, o: &Opts) -> Result<String> {
@@ -27,7 +40,9 @@ pub fn render(repo: &Repo, o: &Opts) -> Result<String> {
     }
     let mut pins: HashMap<String, Vec<String>> = HashMap::new();
     {
-        let mut st = repo.db.prepare("SELECT name, node_id FROM pins ORDER BY name")?;
+        let mut st = repo
+            .db
+            .prepare("SELECT name, node_id FROM pins ORDER BY name")?;
         for r in st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
             let (name, id) = r?;
             pins.entry(id).or_default().push(name);
@@ -47,12 +62,25 @@ pub fn render(repo: &Repo, o: &Opts) -> Result<String> {
             .iter()
             .filter(|n| n.status != Status::Pruned || o.all)
             .filter_map(|n| val.get(&n.id).map(|v| (n, *v)))
-            .max_by(|a, b| if hib { a.1.total_cmp(&b.1) } else { b.1.total_cmp(&a.1) });
+            .max_by(|a, b| {
+                if hib {
+                    a.1.total_cmp(&b.1)
+                } else {
+                    b.1.total_cmp(&a.1)
+                }
+            });
         if let Some((b, _)) = best {
             best_path.extend(node::ancestry(&repo.db, &b.id)?.into_iter().map(|n| n.id));
         }
     }
-    let ctx = Ctx { o, kids: &kids, pins: &pins, val: &val, best: &best_path, head: head.as_deref() };
+    let ctx = Ctx {
+        o,
+        kids: &kids,
+        pins: &pins,
+        val: &val,
+        best: &best_path,
+        head: head.as_deref(),
+    };
     let mut out = String::new();
     let roots = kids.get(&None).cloned().unwrap_or_default();
     ctx.children(&roots, "", true, &mut out);
@@ -75,7 +103,9 @@ enum Item<'a> {
 
 impl<'a> Ctx<'a> {
     fn count(&self, id: &str) -> usize {
-        self.kids.get(&Some(id.to_string())).map_or(0, |v| v.iter().map(|k| 1 + self.count(&k.id)).sum())
+        self.kids
+            .get(&Some(id.to_string()))
+            .map_or(0, |v| v.iter().map(|k| 1 + self.count(&k.id)).sum())
     }
 
     fn children(&self, list: &[&'a Node], prefix: &str, top: bool, out: &mut String) {
@@ -103,16 +133,26 @@ impl<'a> Ctx<'a> {
         let len = items.len();
         for (i, it) in items.into_iter().enumerate() {
             let last = i + 1 == len;
-            let (branch, cont) = if top { ("", "") } else if last { ("└─ ", "   ") } else { ("├─ ", "│  ") };
+            let (branch, cont) = if top {
+                ("", "")
+            } else if last {
+                ("└─ ", "   ")
+            } else {
+                ("├─ ", "│  ")
+            };
             match it {
                 Item::Sweep(name, members) => {
                     let mut line = format!("{prefix}{branch}sweep:{name}  {} runs", members.len());
-                    let vals: Vec<f64> = members.iter().filter_map(|m| self.val.get(&m.id).copied()).collect();
+                    let vals: Vec<f64> = members
+                        .iter()
+                        .filter_map(|m| self.val.get(&m.id).copied())
+                        .collect();
                     if !vals.is_empty() {
                         let n = vals.len() as f64;
                         let mean = vals.iter().sum::<f64>() / n;
                         let sd = if vals.len() > 1 {
-                            (vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0)).sqrt()
+                            (vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0))
+                                .sqrt()
                         } else {
                             0.0
                         };
@@ -129,10 +169,17 @@ impl<'a> Ctx<'a> {
                 }
                 Item::Node(n) => {
                     out.push_str(&format!("{prefix}{branch}{}\n", self.line(n)));
-                    let sub = self.kids.get(&Some(n.id.clone())).cloned().unwrap_or_default();
+                    let sub = self
+                        .kids
+                        .get(&Some(n.id.clone()))
+                        .cloned()
+                        .unwrap_or_default();
                     let collapsed = n.status == Status::Failed && !self.o.all && !sub.is_empty();
                     if collapsed {
-                        out.push_str(&format!("{prefix}{cont}└─ … {} collapsed\n", self.count(&n.id)));
+                        out.push_str(&format!(
+                            "{prefix}{cont}└─ … {} collapsed\n",
+                            self.count(&n.id)
+                        ));
                     } else {
                         self.children(&sub, &format!("{prefix}{cont}"), false, out);
                     }
@@ -161,7 +208,10 @@ impl<'a> Ctx<'a> {
         }
         let t = n.title();
         if !t.is_empty() {
-            s.push_str(&format!("  {}{t}", if n.note_auto { "(auto) " } else { "" }));
+            s.push_str(&format!(
+                "  {}{t}",
+                if n.note_auto { "(auto) " } else { "" }
+            ));
         }
         s
     }

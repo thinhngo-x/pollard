@@ -4,7 +4,7 @@ A version-control tool for deep-learning experiments. Its history is a **tree of
 
 Every training launch becomes an immutable node with one parent. There are no branches, no staging area, no merges, and no required commit messages. You fork, try, prune, and fork again. Git stays your collaboration layer: pollard imports from it and exports linear branches back to it.
 
-> **Status: pre-alpha. Nothing below is implemented yet.** Each command is tagged with the milestone that delivers it (see `docs/PLAN.md`). The design is in `SPEC.md`, and open decisions are in `docs/DECISIONS.md`.
+> **Status: alpha (`0.1.0-alpha.1`).** All milestones M1–M9 are implemented and tested (see the command-status table below and `CHANGELOG.md`). The CLI, storage layout, node schema, and Python SDK may still change before `1.0`; pin an exact version if you depend on them. The design is in `SPEC.md`, and decisions are recorded in `docs/DECISIONS.md`.
 
 ## Concepts in one breath
 
@@ -14,7 +14,7 @@ Every training launch becomes an immutable node with one parent. There are no br
 - **`undo`** reverses any mutating command, using an op log in the style of Jujutsu.
 - `po` is installed alongside `pollard` as a short alias.
 
-## Install (planned, M9)
+## Install
 
 ```sh
 uv tool install pollard-vcs     # PyPI name (`pollard` is an unrelated project); still `import pollard`
@@ -73,6 +73,9 @@ pollard undo                                   # [M1] changed your mind
 ```
 
 ## Command status
+
+All milestones below shipped in `0.1.0-alpha.1`. The milestone column is kept for
+traceability back to `docs/PLAN.md` and `SPEC.md` §9.
 
 | Command | Milestone |
 |---|---|

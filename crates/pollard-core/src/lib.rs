@@ -65,7 +65,9 @@ impl<T> IoCtx<T> for std::io::Result<T> {
 
 /// UTC timestamp `YYYY-MM-DDTHH:MM:SS.ffffffZ` (lexicographically sortable).
 pub fn now() -> String {
-    let d = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let d = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
     let secs = d.as_secs() as i64;
     let (days, rem) = (secs.div_euclid(86400), secs.rem_euclid(86400));
     // civil_from_days (Howard Hinnant)

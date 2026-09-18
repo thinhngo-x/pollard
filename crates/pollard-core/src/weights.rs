@@ -25,12 +25,21 @@ pub fn ckpt_state(repo: &Repo) -> Result<CkptState> {
     if !dir.is_dir() {
         return Ok(out);
     }
-    for ent in ignore::WalkBuilder::new(&dir).standard_filters(false).build() {
+    for ent in ignore::WalkBuilder::new(&dir)
+        .standard_filters(false)
+        .build()
+    {
         let ent = ent.map_err(|e| msg(format!("{}: {e}", dir.display())))?;
         let md = std::fs::metadata(ent.path()).at(ent.path())?;
         if md.is_file() {
-            let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
-            out.insert(ent.path().to_path_buf(), (mtime.map_or(0, |d| d.as_nanos()), md.len()));
+            let mtime = md
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
+            out.insert(
+                ent.path().to_path_buf(),
+                (mtime.map_or(0, |d| d.as_nanos()), md.len()),
+            );
         }
     }
     Ok(out)
@@ -40,7 +49,11 @@ pub fn ckpt_state(repo: &Repo) -> Result<CkptState> {
 /// to `node`'s weights manifest. Returns the new weights hash, if anything was added.
 pub fn register_new(repo: &Repo, node: &str, before: &CkptState) -> Result<Option<String>> {
     let now = ckpt_state(repo)?;
-    let mut changed: Vec<PathBuf> = now.into_iter().filter(|(p, s)| before.get(p) != Some(s)).map(|(p, _)| p).collect();
+    let mut changed: Vec<PathBuf> = now
+        .into_iter()
+        .filter(|(p, s)| before.get(p) != Some(s))
+        .map(|(p, _)| p)
+        .collect();
     if changed.is_empty() {
         return Ok(None);
     }
@@ -53,7 +66,10 @@ pub fn register_new(repo: &Repo, node: &str, before: &CkptState) -> Result<Optio
 /// add them to `node`'s weights manifest. Paths must lie inside the repo.
 pub fn attach(repo: &mut Repo, node: &str, paths: &[PathBuf]) -> Result<OpRecord> {
     let id = repo.resolve(node)?;
-    let abs: Vec<PathBuf> = paths.iter().map(|p| p.canonicalize().at(p)).collect::<Result<_>>()?;
+    let abs: Vec<PathBuf> = paths
+        .iter()
+        .map(|p| p.canonicalize().at(p))
+        .collect::<Result<_>>()?;
     ops::record(repo, None, |repo| {
         add_files(repo, &id, &abs)?;
         Ok(id.clone())
@@ -61,31 +77,61 @@ pub fn attach(repo: &mut Repo, node: &str, paths: &[PathBuf]) -> Result<OpRecord
 }
 
 fn rel_path(repo: &Repo, abs: &Path) -> Result<String> {
-    let rel = abs.strip_prefix(&repo.root).map_err(|_| msg(format!("{}: outside the repo {}", abs.display(), repo.root.display())))?;
-    rel.to_str().map(str::to_string).ok_or_else(|| msg(format!("{}: path is not UTF-8", abs.display())))
+    let rel = abs.strip_prefix(&repo.root).map_err(|_| {
+        msg(format!(
+            "{}: outside the repo {}",
+            abs.display(),
+            repo.root.display()
+        ))
+    })?;
+    rel.to_str()
+        .map(str::to_string)
+        .ok_or_else(|| msg(format!("{}: path is not UTF-8", abs.display())))
 }
 
 /// Store `files` (absolute) and merge them into `node`'s weights manifest; same path replaces.
 fn add_files(repo: &Repo, node: &str, files: &[PathBuf]) -> Result<String> {
     let n = repo.node(node)?;
     let mut entries: BTreeMap<String, Entry> = match &n.weights {
-        Some(h) => repo.objects.get_manifest(h)?.entries.into_iter().map(|e| (e.path.clone(), e)).collect(),
+        Some(h) => repo
+            .objects
+            .get_manifest(h)?
+            .entries
+            .into_iter()
+            .map(|e| (e.path.clone(), e))
+            .collect(),
         None => BTreeMap::new(),
     };
     for abs in files {
         let rel = rel_path(repo, abs)?;
         if abs.is_dir() {
-            for e in repo.objects.snapshot_dir(abs, &WalkOptions::default())?.manifest.entries {
+            for e in repo
+                .objects
+                .snapshot_dir(abs, &WalkOptions::default())?
+                .manifest
+                .entries
+            {
                 let path = format!("{rel}/{}", e.path);
                 entries.insert(path.clone(), Entry { path, ..e });
             }
         } else {
             let (hash, size) = repo.objects.put_file(abs)?;
-            entries.insert(rel.clone(), Entry { path: rel, size, hash, mode: MODE_FILE });
+            entries.insert(
+                rel.clone(),
+                Entry {
+                    path: rel,
+                    size,
+                    hash,
+                    mode: MODE_FILE,
+                },
+            );
         }
     }
-    let h = repo.objects.put_manifest(&Manifest::new(entries.into_values().collect()))?;
-    repo.db.execute("UPDATE nodes SET weights=?1 WHERE id=?2", params![h, node])?;
+    let h = repo
+        .objects
+        .put_manifest(&Manifest::new(entries.into_values().collect()))?;
+    repo.db
+        .execute("UPDATE nodes SET weights=?1 WHERE id=?2", params![h, node])?;
     Ok(h)
 }
 
@@ -93,13 +139,25 @@ fn add_files(repo: &Repo, node: &str, files: &[PathBuf]) -> Result<String> {
 /// (`step30000.pt` → 30000, `epoch3-step500.ckpt` → 500, `last.pt` → none).
 pub fn step_of(path: &str) -> Option<i64> {
     let name = path.rsplit('/').next()?;
-    name.split(|c: char| !c.is_ascii_digit()).filter(|d| !d.is_empty()).last()?.parse().ok()
+    name.split(|c: char| !c.is_ascii_digit())
+        .filter(|d| !d.is_empty())
+        .last()?
+        .parse()
+        .ok()
 }
 
 /// Checkpoints of a node (weights entries under `checkpoint_dir`) with their parsed step.
 pub fn checkpoints(repo: &Repo, n: &Node) -> Result<Vec<(Entry, Option<i64>)>> {
-    let Some(w) = &n.weights else { return Ok(vec![]) };
-    let prefix = format!("{}/", repo.config.checkpoint_dir.trim_start_matches("./").trim_end_matches('/'));
+    let Some(w) = &n.weights else {
+        return Ok(vec![]);
+    };
+    let prefix = format!(
+        "{}/",
+        repo.config
+            .checkpoint_dir
+            .trim_start_matches("./")
+            .trim_end_matches('/')
+    );
     Ok(repo
         .objects
         .get_manifest(w)?
@@ -126,7 +184,7 @@ pub fn restore_step(repo: &Repo, node: &str, step: i64) -> Result<Option<(String
             .filter(|(s, _)| *s <= limit)
             .max_by_key(|(s, _)| *s);
         if let Some((s, e)) = best {
-            repo.objects.restore(&e, &repo.root.join(&e.path))?;
+            repo.objects.restore_at(&e, &repo.root)?;
             return Ok(Some((e.path, s)));
         }
         match (cur.fork_step, cur.parent.clone()) {
@@ -146,9 +204,14 @@ pub fn prune(repo: &mut Repo, node: &str, keep_weights: bool) -> Result<OpRecord
     ops::record(repo, None, |repo| {
         let mut stack = vec![id.clone()];
         while let Some(n) = stack.pop() {
-            repo.db.execute("UPDATE nodes SET status='pruned' WHERE id=?1", [&n])?;
+            repo.db
+                .execute("UPDATE nodes SET status='pruned' WHERE id=?1", [&n])?;
             let key = format!("keep_weights:{n}");
-            if keep_weights { repo.set_meta(&key, "1")? } else { repo.del_meta(&key)? }
+            if keep_weights {
+                repo.set_meta(&key, "1")?
+            } else {
+                repo.del_meta(&key)?
+            }
             stack.extend(node::children(&repo.db, &n)?.into_iter().map(|c| c.id));
         }
         Ok(id.clone())
@@ -158,9 +221,15 @@ pub fn prune(repo: &mut Repo, node: &str, keep_weights: bool) -> Result<OpRecord
 /// Weights paths of `n` whose content is gone (collected by `gc` after a prune).
 /// `undo` of a prune warns when this is non-empty (§3 v3: gc is the point of no return).
 pub fn missing_weights(repo: &Repo, n: &Node) -> Result<Vec<String>> {
-    let Some(w) = &n.weights else { return Ok(vec![]) };
+    let Some(w) = &n.weights else {
+        return Ok(vec![]);
+    };
     let m = repo.objects.get_manifest(w)?;
-    Ok(m.entries.into_iter().filter(|e| !repo.objects.has_blob(&e.hash)).map(|e| e.path).collect())
+    Ok(m.entries
+        .into_iter()
+        .filter(|e| !repo.objects.has_blob(&e.hash))
+        .map(|e| e.path)
+        .collect())
 }
 
 /// `gc`: delete chunks not reachable from any live manifest. Live = weights of non-pruned
@@ -175,7 +244,10 @@ pub fn gc(repo: &Repo) -> Result<GcStats> {
         }
         live.extend(n.docs);
     }
-    for sql in ["SELECT manifest_hash FROM code_trees", "SELECT wc_snapshot FROM ops WHERE wc_snapshot IS NOT NULL"] {
+    for sql in [
+        "SELECT manifest_hash FROM code_trees",
+        "SELECT wc_snapshot FROM ops WHERE wc_snapshot IS NOT NULL",
+    ] {
         let mut st = repo.db.prepare(sql)?;
         for h in st.query_map([], |r| r.get::<_, String>(0))? {
             live.insert(h?);
@@ -260,7 +332,11 @@ mod tests {
         other[1 << 20..(1 << 20) + 5000].fill(1);
 
         mk(&repo, "a", None, None);
-        train(&repo, "a", &[("step100.pt", &base), ("step200.pt", &noise(2 << 20, 9))]);
+        train(
+            &repo,
+            "a",
+            &[("step100.pt", &base), ("step200.pt", &noise(2 << 20, 9))],
+        );
         mk(&repo, "b", Some("a"), Some(100));
         train(&repo, "b", &[("step300.pt", &other)]);
         let a = repo.node("a").unwrap();
@@ -272,7 +348,10 @@ mod tests {
 
         // fork b --step 250: b has nothing <= 250, a only counts up to b's fork_step 100
         fs::remove_dir_all(crate::run::ckpt_dir(&repo)).unwrap();
-        assert_eq!(restore_step(&repo, "b", 250).unwrap(), Some(("ckpt/step100.pt".into(), 100)));
+        assert_eq!(
+            restore_step(&repo, "b", 250).unwrap(),
+            Some(("ckpt/step100.pt".into(), 100))
+        );
         assert_eq!(fs::read(t.path().join("ckpt/step100.pt")).unwrap(), base);
         assert_eq!(restore_step(&repo, "b", 50).unwrap(), None);
         assert_eq!(restore_step(&repo, "a", 250).unwrap().unwrap().1, 200);
@@ -282,7 +361,10 @@ mod tests {
         fs::write(t.path().join("outputs/plots/loss.png"), b"png").unwrap();
         let rec = attach(&mut repo, "b", &[t.path().join("outputs/plots")]).unwrap();
         assert_eq!(rec.node, "b");
-        let wb = repo.objects.get_manifest(&repo.node("b").unwrap().weights.unwrap()).unwrap();
+        let wb = repo
+            .objects
+            .get_manifest(&repo.node("b").unwrap().weights.unwrap())
+            .unwrap();
         assert!(wb.get("outputs/plots/loss.png").is_some() && wb.get("ckpt/step300.pt").is_some());
 
         // prune b then gc: frees only b's unique chunks; a's checkpoints still readable
@@ -295,7 +377,14 @@ mod tests {
             repo.objects.read_blob(&e.hash).unwrap();
         }
         assert!(repo.objects.read_blob(&cb[0].0.hash).is_err());
-        assert_eq!(missing_weights(&repo, &repo.node("b").unwrap()).unwrap(), ["ckpt/step300.pt"]);
-        assert!(missing_weights(&repo, &repo.node("a").unwrap()).unwrap().is_empty());
+        assert_eq!(
+            missing_weights(&repo, &repo.node("b").unwrap()).unwrap(),
+            ["ckpt/step300.pt"]
+        );
+        assert!(
+            missing_weights(&repo, &repo.node("a").unwrap())
+                .unwrap()
+                .is_empty()
+        );
     }
 }

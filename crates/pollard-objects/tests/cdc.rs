@@ -81,5 +81,8 @@ fn one_percent_change_shares_95_percent() {
     let shared: Vec<_> = cb.iter().filter(|c| set_a.contains(&c.0)).collect();
     let by_count = shared.len() as f64 / cb.len() as f64;
     let by_bytes = shared.iter().map(|c| c.1).sum::<u64>() as f64 / len as f64;
-    assert!(by_count >= 0.95 && by_bytes >= 0.95, "shared: {by_count:.4} by count, {by_bytes:.4} by bytes");
+    assert!(
+        by_count >= 0.95 && by_bytes >= 0.95,
+        "shared: {by_count:.4} by count, {by_bytes:.4} by bytes"
+    );
 }

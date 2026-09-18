@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "pollard-vcs"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "Tree-based experiment version control (bundles the pollard/po binaries)"
 requires-python = ">=3.10"
 license = { text = "MIT OR Apache-2.0" }

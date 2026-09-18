@@ -22,19 +22,29 @@ pub fn import(repo: &mut Repo, rev: &str) -> Result<OpRecord> {
     let _ = std::fs::remove_dir_all(&tmp);
     let snap = pollard_git::checkout_to(&repo.root, rev, &tmp)
         .map_err(git_err)
-        .and_then(|commit| Ok((commit, repo.objects.snapshot_dir(&tmp, &wc::code_opts(repo))?)));
+        .and_then(|commit| {
+            Ok((
+                commit,
+                repo.objects.snapshot_dir(&tmp, &wc::code_opts(repo))?,
+            ))
+        });
     let _ = std::fs::remove_dir_all(&tmp);
     let (commit, snap) = snap?;
     let code = wc::code_hash(repo, &snap.manifest)?;
 
     let cfg = match wc::capture_mode(repo) {
-        Capture::File(p) if repo.root.join(&p).is_file() => wc::read_config_file(&repo.root.join(p))?,
+        Capture::File(p) if repo.root.join(&p).is_file() => {
+            wc::read_config_file(&repo.root.join(p))?
+        }
         _ => Value::Object(Default::default()),
     };
     let config = wc::store_config(repo, &cfg)?;
     let data = wc::data_manifest(repo)?;
     let env_hash = env::store(repo, &env::inputs(&repo.root, &[]))?;
-    let docs = repo.objects.snapshot_dir(&repo.root, &wc::docs_opts(repo))?.manifest;
+    let docs = repo
+        .objects
+        .snapshot_dir(&repo.root, &wc::docs_opts(repo))?
+        .manifest;
     let id = repo.next_id()?;
     let n = Node {
         id: id.clone(),
@@ -88,22 +98,45 @@ pub fn export(repo: &Repo, spec: &str, branch: Option<&str>) -> Result<Exported>
         }
         None => vec![repo.node(&repo.resolve(spec)?)?],
     };
-    let docs = repo.objects.snapshot_dir(&repo.root, &wc::docs_opts(repo))?.manifest;
+    let docs = repo
+        .objects
+        .snapshot_dir(&repo.root, &wc::docs_opts(repo))?
+        .manifest;
     let mut commits = Vec::new();
     for n in &chain {
-        let code = repo.objects.get_manifest(&wc::manifest_of(repo, &n.code)?)?;
-        let mut files: BTreeMap<String, Entry> = code.entries.into_iter().map(|e| (e.path.clone(), e)).collect();
+        let code = repo
+            .objects
+            .get_manifest(&wc::manifest_of(repo, &n.code)?)?;
+        let mut files: BTreeMap<String, Entry> = code
+            .entries
+            .into_iter()
+            .map(|e| (e.path.clone(), e))
+            .collect();
         files.extend(docs.entries.iter().map(|e| (e.path.clone(), e.clone())));
         let recipe = serde_json::to_vec_pretty(&recipe_json(repo, n)?)?;
         let (hash, size) = repo.objects.put_bytes(&recipe)?;
         let path = ".pollard-recipe.json".to_string();
-        files.insert(path.clone(), Entry { path, size, hash, mode: MODE_FILE });
-        commits.push((Manifest::new(files.into_values().collect()), message(repo, n)?));
+        files.insert(
+            path.clone(),
+            Entry {
+                path,
+                size,
+                hash,
+                mode: MODE_FILE,
+            },
+        );
+        commits.push((
+            Manifest::new(files.into_values().collect()),
+            message(repo, n)?,
+        ));
     }
     let last = &chain.last().expect("chain is never empty").id;
     let branch = branch.map_or_else(|| format!("pollard/{last}"), str::to_string);
     let ids = pollard_git::export(&repo.root, &repo.objects, &commits, &branch).map_err(git_err)?;
-    Ok(Exported { branch, commits: chain.iter().map(|n| n.id.clone()).zip(ids).collect() })
+    Ok(Exported {
+        branch,
+        commits: chain.iter().map(|n| n.id.clone()).zip(ids).collect(),
+    })
 }
 
 fn recipe_json(repo: &Repo, n: &Node) -> Result<Value> {
@@ -140,7 +173,11 @@ fn message(repo: &Repo, n: &Node) -> Result<String> {
     if !n.title().is_empty() {
         first.push_str(&format!(": {}", n.title()));
     }
-    let mut body: Vec<String> = delta::load(repo, &n.id)?.config.iter().map(delta::fmt_change).collect();
+    let mut body: Vec<String> = delta::load(repo, &n.id)?
+        .config
+        .iter()
+        .map(delta::fmt_change)
+        .collect();
     let key = match &repo.config.primary_metric {
         Some(k) => Some(k.clone()),
         None => metrics::keys(&repo.db, &n.id)?.into_iter().next(),
@@ -150,7 +187,11 @@ fn message(repo: &Repo, n: &Node) -> Result<String> {
             body.push(format!("{k} = {v} at step {step}"));
         }
     }
-    Ok(if body.is_empty() { first } else { format!("{first}\n\n{}", body.join("\n")) })
+    Ok(if body.is_empty() {
+        first
+    } else {
+        format!("{first}\n\n{}", body.join("\n"))
+    })
 }
 
 #[cfg(test)]
@@ -162,13 +203,24 @@ mod tests {
 
     fn git(dir: &Path, args: &[&str]) -> String {
         let out = Command::new("git")
-            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ])
             .args(args)
             .current_dir(dir)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .output()
             .unwrap();
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8(out.stdout).unwrap().trim().to_string()
     }
 
@@ -206,8 +258,12 @@ mod tests {
         // tree minus the recipe file == HEAD's tree, except REPORT.md comes from the working copy
         assert_eq!(git(r, &["show", "exp:REPORT.md"]), "report v2");
         let subject = git(r, &["show", "-s", "--format=%s", "exp"]);
-        assert!(subject.starts_with(&format!("{} (base): import HEAD", root.id)), "{subject}");
-        let recipe: Value = serde_json::from_str(&git(r, &["show", "exp:.pollard-recipe.json"])).unwrap();
+        assert!(
+            subject.starts_with(&format!("{} (base): import HEAD", root.id)),
+            "{subject}"
+        );
+        let recipe: Value =
+            serde_json::from_str(&git(r, &["show", "exp:.pollard-recipe.json"])).unwrap();
         assert_eq!(recipe["config"], json!({"lr": 0.1}));
 
         fs::write(r.join("REPORT.md"), "report").unwrap();
@@ -220,7 +276,17 @@ mod tests {
             .status()
             .unwrap();
         assert!(tree.success());
-        let out = Command::new("git").arg("write-tree").env("GIT_INDEX_FILE", r.join(".git/tmp-index")).current_dir(r).output().unwrap();
-        assert_eq!(String::from_utf8(out.stdout).unwrap().trim(), head_tree, "{}", ex.commits[0].1);
+        let out = Command::new("git")
+            .arg("write-tree")
+            .env("GIT_INDEX_FILE", r.join(".git/tmp-index"))
+            .current_dir(r)
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(out.stdout).unwrap().trim(),
+            head_tree,
+            "{}",
+            ex.commits[0].1
+        );
     }
 }

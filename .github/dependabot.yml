@@ -1,0 +1,17 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # maturin/pyproject.toml project; dependabot's pip ecosystem understands pyproject.toml.
+  - package-ecosystem: pip
+    directory: /python
+    schedule:
+      interval: weekly

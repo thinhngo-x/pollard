@@ -11,7 +11,10 @@ use crate::{OpRecord, Repo, Result, env, metrics, msg, ops, siblings, wc};
 pub fn note(repo: &mut Repo, node: &str, text: &str) -> Result<OpRecord> {
     let id = repo.resolve(node)?;
     ops::record(repo, None, |repo| {
-        repo.db.execute("UPDATE nodes SET note=?1, note_auto=0 WHERE id=?2", params![text, id])?;
+        repo.db.execute(
+            "UPDATE nodes SET note=?1, note_auto=0 WHERE id=?2",
+            params![text, id],
+        )?;
         Ok(id.clone())
     })
 }
@@ -22,7 +25,10 @@ pub fn pin(repo: &mut Repo, node: &str, name: &str) -> Result<OpRecord> {
         return Err(msg(format!("invalid pin name '{name}'")));
     }
     ops::record(repo, None, |repo| {
-        repo.db.execute("INSERT OR REPLACE INTO pins(name,node_id) VALUES(?1,?2)", params![name, id])?;
+        repo.db.execute(
+            "INSERT OR REPLACE INTO pins(name,node_id) VALUES(?1,?2)",
+            params![name, id],
+        )?;
         Ok(id.clone())
     })
 }
@@ -30,7 +36,9 @@ pub fn pin(repo: &mut Repo, node: &str, name: &str) -> Result<OpRecord> {
 pub fn unpin(repo: &mut Repo, name: &str) -> Result<OpRecord> {
     let id: String = repo
         .db
-        .query_row("SELECT node_id FROM pins WHERE name=?1", [name], |r| r.get(0))
+        .query_row("SELECT node_id FROM pins WHERE name=?1", [name], |r| {
+            r.get(0)
+        })
         .optional()?
         .ok_or_else(|| msg(format!("no pin named '{name}'")))?;
     ops::record(repo, None, |repo| {
@@ -71,7 +79,10 @@ pub fn fork(repo: &mut Repo, node: &str, step: Option<i64>, no_sync: bool) -> Re
                     notices.push(format!("note: no checkpoint at step {s}; restored {p} (step {got}) and fork_step={got}"));
                     fork_step = Some(*got);
                 }
-                None => notices.push(format!("note: {} has no checkpoint at or before step {s}; nothing restored", anchor.id)),
+                None => notices.push(format!(
+                    "note: {} has no checkpoint at or before step {s}; nothing restored",
+                    anchor.id
+                )),
                 _ => {}
             }
             r
@@ -89,7 +100,13 @@ pub fn fork(repo: &mut Repo, node: &str, step: Option<i64>, no_sync: bool) -> Re
     })?;
     wc::checkout(repo, &manifest)?;
     let synced = !no_sync && env::sync(&repo.root)?;
-    Ok(Forked { op, notices, restored, fork_step, synced })
+    Ok(Forked {
+        op,
+        notices,
+        restored,
+        fork_step,
+        synced,
+    })
 }
 
 fn text(repo: &Repo, m: &Manifest, path: &str) -> Result<Option<Vec<u8>>> {
@@ -110,42 +127,98 @@ pub struct Applied {
 /// Conflicts are written as markers; nothing is refused.
 pub fn apply(repo: &mut Repo, node: &str) -> Result<Applied> {
     let n = repo.node(&repo.resolve(node)?)?;
-    let parent = n.parent.clone().ok_or_else(|| msg(format!("{} is a root; it has no delta to apply", n.id)))?;
-    let pm = repo.objects.get_manifest(&wc::manifest_of(repo, &repo.node(&parent)?.code)?)?;
-    let nm = repo.objects.get_manifest(&wc::manifest_of(repo, &n.code)?)?;
+    let parent = n
+        .parent
+        .clone()
+        .ok_or_else(|| msg(format!("{} is a root; it has no delta to apply", n.id)))?;
+    let pm = repo
+        .objects
+        .get_manifest(&wc::manifest_of(repo, &repo.node(&parent)?.code)?)?;
+    let nm = repo
+        .objects
+        .get_manifest(&wc::manifest_of(repo, &n.code)?)?;
+    repo.objects.validate_destinations(&pm, &repo.root)?;
+    repo.objects.validate_destinations(&nm, &repo.root)?;
     let saved = wc::snapshot_manifest(repo)?;
+    let current = repo.objects.get_manifest(&saved)?;
     let (mut changed, mut conflicts) = (vec![], vec![]);
     let root = repo.root.clone();
     for c in pollard_objects::diff(&pm, &nm) {
         let dest = root.join(&c.path);
-        let ours = std::fs::read(&dest).ok();
-        let base = text(repo, &pm, &c.path)?;
-        let theirs = text(repo, &nm, &c.path)?;
-        if ours == theirs {
+        if current.get(&c.path).is_none() && std::fs::symlink_metadata(&dest).is_ok() {
+            conflicts.push(c.path);
             continue;
         }
-        if ours == base {
+        let ours = text(repo, &current, &c.path)?;
+        let ours_mode = current.get(&c.path).map(|e| e.mode);
+        let base_mode = pm.get(&c.path).map(|e| e.mode);
+        let theirs_mode = nm.get(&c.path).map(|e| e.mode);
+        let base = text(repo, &pm, &c.path)?;
+        let theirs = text(repo, &nm, &c.path)?;
+        if ours == theirs && ours_mode == theirs_mode {
+            continue;
+        }
+        if ours == base && ours_mode == base_mode {
             match c.kind {
                 ChangeKind::Removed => {
                     std::fs::remove_file(&dest).map_err(|e| crate::Error::Io(dest.clone(), e))?;
                 }
-                _ => repo.objects.restore(nm.get(&c.path).unwrap(), &dest)?,
+                _ => repo.objects.restore_at(nm.get(&c.path).unwrap(), &root)?,
             }
             changed.push(c.path);
             continue;
         }
+        let mode = if ours_mode == base_mode {
+            theirs_mode
+        } else if theirs_mode == base_mode || ours_mode == theirs_mode {
+            ours_mode
+        } else {
+            None
+        };
+        // Type conflicts and symlink targets cannot be merged as file contents.
+        if mode.is_none()
+            || [ours_mode, base_mode, theirs_mode].contains(&Some(pollard_objects::MODE_LINK))
+        {
+            conflicts.push(c.path);
+            continue;
+        }
+        if (base == theirs || ours == theirs) && ours.is_some() {
+            let bytes = ours.as_ref().unwrap();
+            let (hash, size) = repo.objects.put_bytes(bytes)?;
+            let entry = pollard_objects::Entry {
+                path: c.path.clone(),
+                hash,
+                size,
+                mode: mode.unwrap(),
+            };
+            repo.objects.restore_at(&entry, &root)?;
+            changed.push(c.path);
+            continue;
+        }
         // real conflict: three-way text merge
-        let s = |b: &Option<Vec<u8>>| b.as_deref().map(|b| String::from_utf8(b.to_vec()).ok()).unwrap_or(Some(String::new()));
+        let s = |b: &Option<Vec<u8>>| {
+            b.as_deref()
+                .map(|b| String::from_utf8(b.to_vec()).ok())
+                .unwrap_or(Some(String::new()))
+        };
         match (s(&base), s(&ours), s(&theirs)) {
             (Some(b), Some(o), Some(t)) if c.kind != ChangeKind::Removed => {
-                let merged = match linewise_merge(&b, &o, &t).map_or_else(|| diffy::merge(&b, &o, &t), Ok) {
-                    Ok(m) => m,
-                    Err(m) => {
-                        conflicts.push(c.path.clone());
-                        m
-                    }
+                let merged =
+                    match linewise_merge(&b, &o, &t).map_or_else(|| diffy::merge(&b, &o, &t), Ok) {
+                        Ok(m) => m,
+                        Err(m) => {
+                            conflicts.push(c.path.clone());
+                            m
+                        }
+                    };
+                let (hash, size) = repo.objects.put_bytes(merged.as_bytes())?;
+                let entry = pollard_objects::Entry {
+                    path: c.path.clone(),
+                    hash,
+                    size,
+                    mode: mode.unwrap(),
                 };
-                std::fs::write(&dest, merged).map_err(|e| crate::Error::Io(dest.clone(), e))?;
+                repo.objects.restore_at(&entry, &root)?;
                 changed.push(c.path);
             }
             _ => conflicts.push(c.path),
@@ -153,14 +226,21 @@ pub fn apply(repo: &mut Repo, node: &str) -> Result<Applied> {
     }
     let id = n.id.clone();
     let op = ops::record(repo, Some(saved), |_| Ok(id))?;
-    Ok(Applied { op, changed, conflicts })
+    Ok(Applied {
+        op,
+        changed,
+        conflicts,
+    })
 }
 
 /// In-place line edits (same line count on all sides) merge per line, so edits on adjacent
 /// lines (`lr` vs `depth` in a config) don't conflict the way diff3 hunks would.
 fn linewise_merge(base: &str, ours: &str, theirs: &str) -> Option<String> {
-    let (b, o, t): (Vec<&str>, Vec<&str>, Vec<&str>) =
-        (base.split_inclusive('\n').collect(), ours.split_inclusive('\n').collect(), theirs.split_inclusive('\n').collect());
+    let (b, o, t): (Vec<&str>, Vec<&str>, Vec<&str>) = (
+        base.split_inclusive('\n').collect(),
+        ours.split_inclusive('\n').collect(),
+        theirs.split_inclusive('\n').collect(),
+    );
     if b.len() != o.len() || b.len() != t.len() {
         return None;
     }
@@ -193,7 +273,13 @@ fn unified(path: &str, a: &[u8], b: &[u8], out: &mut String) {
     }
 }
 
-fn manifest_diff_text(repo: &Repo, a: &Manifest, b: &Manifest, skip: Option<&str>, out: &mut String) -> Result<()> {
+fn manifest_diff_text(
+    repo: &Repo,
+    a: &Manifest,
+    b: &Manifest,
+    skip: Option<&str>,
+    out: &mut String,
+) -> Result<()> {
     for c in pollard_objects::diff(a, b) {
         if Some(c.path.as_str()) == skip {
             continue;
@@ -211,7 +297,9 @@ pub fn diff(repo: &Repo, a: &str, b: &str, docs: bool) -> Result<String> {
     let mut out = String::new();
     if docs {
         let m = |h: &Option<String>| -> Result<Manifest> {
-            h.as_ref().map_or(Ok(Manifest::default()), |h| Ok(repo.objects.get_manifest(h)?))
+            h.as_ref().map_or(Ok(Manifest::default()), |h| {
+                Ok(repo.objects.get_manifest(h)?)
+            })
         };
         manifest_diff_text(repo, &m(&na.docs)?, &m(&nb.docs)?, None, &mut out)?;
         if out.is_empty() {
@@ -223,28 +311,45 @@ pub fn diff(repo: &Repo, a: &str, b: &str, docs: bool) -> Result<String> {
         let t = siblings::build(
             repo,
             na.parent.as_deref().unwrap(),
-            &siblings::Opts { only: Some(vec![na.id.clone(), nb.id.clone()]), all: true, ..Default::default() },
+            &siblings::Opts {
+                only: Some(vec![na.id.clone(), nb.id.clone()]),
+                all: true,
+                ..Default::default()
+            },
         )?;
         let _ = writeln!(out, "siblings of {} (each vs. the parent)", t.parent);
         out.push_str(&siblings::render(&t));
         return Ok(out);
     }
     let _ = writeln!(out, "{} → {}", na.id, nb.id);
-    let cfg = delta::config_delta(&wc::load_config(repo, &na.config)?, &wc::load_config(repo, &nb.config)?);
+    let cfg = delta::config_delta(
+        &wc::load_config(repo, &na.config)?,
+        &wc::load_config(repo, &nb.config)?,
+    );
     for c in &cfg {
         let _ = writeln!(out, "config  {}  {}", c.path, fmt_change(c));
     }
-    let ma = repo.objects.get_manifest(&wc::manifest_of(repo, &na.code)?)?;
-    let mb = repo.objects.get_manifest(&wc::manifest_of(repo, &nb.code)?)?;
+    let ma = repo
+        .objects
+        .get_manifest(&wc::manifest_of(repo, &na.code)?)?;
+    let mb = repo
+        .objects
+        .get_manifest(&wc::manifest_of(repo, &nb.code)?)?;
     let skip = match wc::capture_mode(repo) {
         wc::Capture::File(p) => Some(p),
         _ => None,
     };
-    let code: Vec<_> = pollard_objects::diff(&ma, &mb).into_iter().filter(|c| Some(&c.path) != skip.as_ref()).collect();
+    let code: Vec<_> = pollard_objects::diff(&ma, &mb)
+        .into_iter()
+        .filter(|c| Some(&c.path) != skip.as_ref())
+        .collect();
     if !code.is_empty() {
         let _ = writeln!(out, "code    {}", delta::summarize_changes(&code));
     }
-    let (da, db) = (repo.objects.get_manifest(&na.data)?, repo.objects.get_manifest(&nb.data)?);
+    let (da, db) = (
+        repo.objects.get_manifest(&na.data)?,
+        repo.objects.get_manifest(&nb.data)?,
+    );
     let dd = pollard_objects::diff(&da, &db);
     if !dd.is_empty() {
         let _ = writeln!(out, "data    {}", delta::summarize_changes(&dd));
@@ -253,13 +358,17 @@ pub fn diff(repo: &Repo, a: &str, b: &str, docs: bool) -> Result<String> {
     if !ed.is_empty() {
         let _ = writeln!(out, "env     {}", delta::summarize_env(&ed));
     }
-    let keys: std::collections::BTreeSet<String> =
-        metrics::keys(&repo.db, &na.id)?.into_iter().chain(metrics::keys(&repo.db, &nb.id)?).collect();
+    let keys: std::collections::BTreeSet<String> = metrics::keys(&repo.db, &na.id)?
+        .into_iter()
+        .chain(metrics::keys(&repo.db, &nb.id)?)
+        .collect();
     for k in keys {
         let la = metrics::series(&repo.db, &na.id, &k)?.last().copied();
         let lb = metrics::series(&repo.db, &nb.id, &k)?.last().copied();
         let f = |p: Option<(i64, f64)>| {
-            p.map_or("—".to_string(), |(s, v)| format!("{}@{}", siblings::fmt_num(v), siblings::fmt_step(s)))
+            p.map_or("—".to_string(), |(s, v)| {
+                format!("{}@{}", siblings::fmt_num(v), siblings::fmt_step(s))
+            })
         };
         let _ = writeln!(out, "metric  {k}  {}  {}", f(la), f(lb));
     }
@@ -271,7 +380,11 @@ pub fn diff(repo: &Repo, a: &str, b: &str, docs: bool) -> Result<String> {
 mod tests {
     #[test]
     fn linewise() {
-        let m = super::linewise_merge("lr: 3\ndepth: 12\n", "lr: 3\ndepth: 24\n", "lr: 1\ndepth: 12\n");
+        let m = super::linewise_merge(
+            "lr: 3\ndepth: 12\n",
+            "lr: 3\ndepth: 24\n",
+            "lr: 1\ndepth: 12\n",
+        );
         assert_eq!(m.as_deref(), Some("lr: 1\ndepth: 24\n"));
         assert_eq!(super::linewise_merge("x = 1\n", "x = 3\n", "x = 2\n"), None);
     }

@@ -74,7 +74,9 @@ impl Store {
     fn get_raw(&self, kind: &str, hash: &str) -> Result<Vec<u8>> {
         let path = self.shard(kind, hash);
         let z = match fs::read(&path) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(Error::NotFound(hash.into())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(Error::NotFound(hash.into()));
+            }
             r => r.at(&path)?,
         };
         let bytes = zstd::decode_all(&z[..]).map_err(|_| Error::Corrupt(hash.into()))?;
@@ -157,19 +159,29 @@ impl Store {
         };
         let mut out = Vec::new();
         for (i, line) in text.lines().enumerate() {
-            let parsed = line.split_once(' ').and_then(|(h, n)| Some((h.to_string(), n.parse().ok()?)));
-            out.push(parsed.ok_or(Error::BadManifest { line: i + 1, reason: format!("bad chunk map {hash}") })?);
+            let parsed = line
+                .split_once(' ')
+                .and_then(|(h, n)| Some((h.to_string(), n.parse().ok()?)));
+            out.push(parsed.ok_or(Error::BadManifest {
+                line: i + 1,
+                reason: format!("bad chunk map {hash}"),
+            })?);
         }
         Ok(Some(out))
     }
 
     /// Stream a blob (object or chunked) into `w`, verifying its hash.
     pub fn write_blob(&self, hash: &str, w: &mut dyn Write) -> Result<()> {
-        let io = |e| Error::Io { path: PathBuf::from(format!("<blob {hash}>")), source: e };
+        let io = |e| Error::Io {
+            path: PathBuf::from(format!("<blob {hash}>")),
+            source: e,
+        };
         if self.has_object(hash) {
             return w.write_all(&self.get_object(hash)?).map_err(io);
         }
-        let chunks = self.chunks_of(hash)?.ok_or_else(|| Error::NotFound(hash.into()))?;
+        let chunks = self
+            .chunks_of(hash)?
+            .ok_or_else(|| Error::NotFound(hash.into()))?;
         let mut hasher = blake3::Hasher::new();
         for (c, _) in chunks {
             let data = self.get_raw("chunks", &c)?;
@@ -188,10 +200,76 @@ impl Store {
         Ok(out)
     }
 
+    /// Check every destination before any working-copy mutation. Symlink entries are
+    /// allowed, but neither existing nor manifest-provided symlinks may be parents.
+    pub fn validate_destinations(&self, m: &Manifest, root: &Path) -> Result<()> {
+        self.validate_with_removals(m, root, &HashSet::new())
+    }
+
+    fn validate_with_removals(
+        &self,
+        m: &Manifest,
+        root: &Path,
+        removed: &HashSet<&str>,
+    ) -> Result<()> {
+        let paths: HashSet<&str> = m.entries.iter().map(|e| e.path.as_str()).collect();
+        for e in &m.entries {
+            let path = Path::new(&e.path);
+            if e.path.is_empty()
+                || e.path
+                    .split('/')
+                    .any(|p| matches!(p, "" | "." | ".." | ".git" | ".pollard"))
+                || path.is_absolute()
+                || e.path.contains(['\0', '\n'])
+            {
+                return Err(Error::BadPath(path.into()));
+            }
+            let parents: Vec<_> = path
+                .ancestors()
+                .skip(1)
+                .filter(|p| !p.as_os_str().is_empty())
+                .collect();
+            if parents
+                .iter()
+                .any(|parent| paths.contains(parent.to_str().unwrap()))
+            {
+                return Err(Error::BadPath(path.into()));
+            }
+            for parent in parents.into_iter().rev() {
+                if removed.contains(parent.to_str().unwrap()) {
+                    break;
+                }
+                let dest = root.join(parent);
+                match fs::symlink_metadata(&dest) {
+                    Ok(md) if md.file_type().is_symlink() => return Err(Error::BadPath(dest)),
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                        return Err(Error::Io {
+                            path: dest,
+                            source: e,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Restore a repository-relative entry after checking its destination.
+    pub fn restore_at(&self, e: &Entry, root: &Path) -> Result<()> {
+        self.validate_destinations(&Manifest::new(vec![e.clone()]), root)?;
+        self.restore(e, &fs::canonicalize(root).at(root)?.join(&e.path))
+    }
+
     /// Write one manifest entry's content to `dest` (atomically, with its mode;
     /// symlinks recreated). Parent directories are created.
     pub fn restore(&self, e: &Entry, dest: &Path) -> Result<()> {
         let dir = dest.parent().expect("dest has a parent");
+        for parent in dir.ancestors() {
+            if fs::symlink_metadata(parent).is_ok_and(|md| md.file_type().is_symlink()) {
+                return Err(Error::BadPath(parent.into()));
+            }
+        }
         fs::create_dir_all(dir).at(dir)?;
         if e.mode == MODE_LINK {
             let target = self.read_blob(&e.hash)?;
@@ -204,7 +282,9 @@ impl Store {
         let mut tmp = tempfile::NamedTempFile::new_in(dir).at(dir)?;
         self.write_blob(&e.hash, tmp.as_file_mut())?;
         let perm = if e.mode == MODE_EXEC { 0o755 } else { 0o644 };
-        tmp.as_file().set_permissions(fs::Permissions::from_mode(perm)).at(dest)?;
+        tmp.as_file()
+            .set_permissions(fs::Permissions::from_mode(perm))
+            .at(dest)?;
         tmp.persist(dest).map_err(|e| e.error).at(dest)?;
         Ok(())
     }
@@ -230,10 +310,17 @@ impl Store {
     /// Files outside `opts` (ignored, off-tree, `.pollard/`) are never touched.
     /// Checks every blob exists before changing anything.
     pub fn materialize(&self, m: &Manifest, root: &Path, opts: &WalkOptions) -> Result<()> {
+        let current = crate::scan_dir(root, opts)?.manifest;
+        let removed: HashSet<&str> = current
+            .entries
+            .iter()
+            .filter(|e| m.get(&e.path).is_none())
+            .map(|e| e.path.as_str())
+            .collect();
+        self.validate_with_removals(m, root, &removed)?;
         if let Some(e) = m.entries.iter().find(|e| !self.has_blob(&e.hash)) {
             return Err(Error::NotFound(format!("{} (for {})", e.hash, e.path)));
         }
-        let current = crate::scan_dir(root, opts)?.manifest;
         for e in &current.entries {
             if m.get(&e.path).is_some() {
                 continue;
@@ -249,10 +336,13 @@ impl Store {
             }
         }
         for e in &m.entries {
-            if current.get(&e.path).is_some_and(|c| c.hash == e.hash && c.mode == e.mode) {
+            if current
+                .get(&e.path)
+                .is_some_and(|c| c.hash == e.hash && c.mode == e.mode)
+            {
                 continue;
             }
-            self.restore(e, &root.join(&e.path))?;
+            self.restore_at(e, root)?;
         }
         Ok(())
     }
@@ -320,11 +410,15 @@ impl Store {
     pub fn list(&self, kind: &str) -> Result<Vec<(String, PathBuf, u64)>> {
         let base = self.root.join(kind);
         let mut out = Vec::new();
-        let Ok(shards) = fs::read_dir(&base) else { return Ok(out) };
+        let Ok(shards) = fs::read_dir(&base) else {
+            return Ok(out);
+        };
         for shard in shards {
             let shard = shard.at(&base)?;
             let prefix = shard.file_name().to_string_lossy().into_owned();
-            let Ok(files) = fs::read_dir(shard.path()) else { continue };
+            let Ok(files) = fs::read_dir(shard.path()) else {
+                continue;
+            };
             for f in files {
                 let f = f.at(&shard.path())?;
                 let hash = format!("{prefix}{}", f.file_name().to_string_lossy());
@@ -366,10 +460,19 @@ mod tests {
         let (_t, s) = setup();
         let h = s.put_object(b"hello").unwrap();
         assert_eq!(h, hash_bytes(b"hello"));
-        assert!(s.root().join("objects").join(&h[..2]).join(&h[2..]).is_file());
+        assert!(
+            s.root()
+                .join("objects")
+                .join(&h[..2])
+                .join(&h[2..])
+                .is_file()
+        );
         assert_eq!(s.get_object(&h).unwrap(), b"hello");
         assert_eq!(s.put_object(b"hello").unwrap(), h);
-        assert!(matches!(s.get_object(&hash_bytes(b"nope")), Err(Error::NotFound(_))));
+        assert!(matches!(
+            s.get_object(&hash_bytes(b"nope")),
+            Err(Error::NotFound(_))
+        ));
         // corruption is detected
         let p = s.root().join("objects").join(&h[..2]).join(&h[2..]);
         fs::write(&p, zstd::encode_all(&b"evil"[..], 3).unwrap()).unwrap();
@@ -383,7 +486,10 @@ mod tests {
         let p = t.path().join("big.bin");
         fs::write(&p, &data).unwrap();
         let (h, size) = s.put_file(&p).unwrap();
-        assert_eq!((h.as_str(), size), (hash_bytes(&data).as_str(), data.len() as u64));
+        assert_eq!(
+            (h.as_str(), size),
+            (hash_bytes(&data).as_str(), data.len() as u64)
+        );
         assert!(!s.has_object(&h) && s.has_blob(&h));
         let chunks = s.chunks_of(&h).unwrap().unwrap();
         assert!(chunks.len() > 10);
@@ -429,14 +535,28 @@ mod tests {
         s.materialize(&a, wc, &opts).unwrap();
         assert_eq!(scan_dir(wc, &opts).unwrap().manifest, a);
         assert!(!wc.join("new").exists(), "emptied dir removed");
-        assert_eq!(fs::read(wc.join("REPORT.md")).unwrap(), b"report v2", "off-tree untouched");
-        assert_eq!(fs::metadata(wc.join("train.py")).unwrap().permissions().mode() & 0o777, 0o755);
+        assert_eq!(
+            fs::read(wc.join("REPORT.md")).unwrap(),
+            b"report v2",
+            "off-tree untouched"
+        );
+        assert_eq!(
+            fs::metadata(wc.join("train.py"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755
+        );
         assert!(s.root().join("objects").exists(), ".pollard untouched");
 
         // missing blob: refuse before touching anything
         let mut bad = a.clone();
         bad.entries[0].hash = hash_bytes(b"missing");
-        assert!(matches!(s.materialize(&bad, wc, &opts), Err(Error::NotFound(_))));
+        assert!(matches!(
+            s.materialize(&bad, wc, &opts),
+            Err(Error::NotFound(_))
+        ));
         assert_eq!(scan_dir(wc, &opts).unwrap().manifest, a);
     }
 
@@ -452,13 +572,30 @@ mod tests {
         fs::write(&pb, &other).unwrap();
         let entry = |p: &Path| {
             let (hash, size) = s.put_file(p).unwrap();
-            Entry { path: "ckpt.pt".into(), size, hash, mode: 0o100644 }
+            Entry {
+                path: "ckpt.pt".into(),
+                size,
+                hash,
+                mode: 0o100644,
+            }
         };
         let (ea, eb) = (entry(&pa), entry(&pb));
         let ma = s.put_manifest(&Manifest::new(vec![ea.clone()])).unwrap();
         let mb = s.put_manifest(&Manifest::new(vec![eb.clone()])).unwrap();
-        let ca: HashSet<_> = s.chunks_of(&ea.hash).unwrap().unwrap().into_iter().map(|c| c.0).collect();
-        let cb: HashSet<_> = s.chunks_of(&eb.hash).unwrap().unwrap().into_iter().map(|c| c.0).collect();
+        let ca: HashSet<_> = s
+            .chunks_of(&ea.hash)
+            .unwrap()
+            .unwrap()
+            .into_iter()
+            .map(|c| c.0)
+            .collect();
+        let cb: HashSet<_> = s
+            .chunks_of(&eb.hash)
+            .unwrap()
+            .unwrap()
+            .into_iter()
+            .map(|c| c.0)
+            .collect();
         let unique_b = cb.difference(&ca).count();
         assert!(unique_b > 0 && unique_b < 5);
 

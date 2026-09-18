@@ -26,7 +26,13 @@ pub struct Out {
 impl Out {
     /// Last non-empty stdout line, trimmed. §4/§10: mutating commands print the node id here.
     pub fn last_line(&self) -> String {
-        self.stdout.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").to_string()
+        self.stdout
+            .lines()
+            .rev()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("")
+            .to_string()
     }
     pub fn all(&self) -> String {
         format!("{}\n{}", self.stdout, self.stderr)
@@ -38,7 +44,11 @@ impl Out {
 
 impl std::fmt::Display for Out {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "$ {}\n[exit {:?}, {:?}]\n--- stdout ---\n{}\n--- stderr ---\n{}", self.cmdline, self.code, self.elapsed, self.stdout, self.stderr)
+        write!(
+            f,
+            "$ {}\n[exit {:?}, {:?}]\n--- stdout ---\n{}\n--- stderr ---\n{}",
+            self.cmdline, self.code, self.elapsed, self.stdout, self.stderr
+        )
     }
 }
 
@@ -77,7 +87,11 @@ impl Repo {
             }
         }
         // The built binary is on PATH so scripts / the Python SDK can call `pollard`.
-        let path = format!("{}:{}", bin().parent().unwrap().display(), std::env::var("PATH").unwrap_or_default());
+        let path = format!(
+            "{}:{}",
+            bin().parent().unwrap().display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
         c.env("PATH", path)
             .env("POLLARD_BIN", bin())
             .env("EDITOR", "true")
@@ -142,7 +156,11 @@ impl Repo {
     }
     pub fn rm(&self, rel: &str) {
         let p = self.root.join(rel);
-        if p.is_dir() { fs::remove_dir_all(p).unwrap() } else { fs::remove_file(p).unwrap() }
+        if p.is_dir() {
+            fs::remove_dir_all(p).unwrap()
+        } else {
+            fs::remove_file(p).unwrap()
+        }
     }
 
     /// Write an executable sh script into aux/ (outside the recipe) and return its path.
@@ -162,7 +180,10 @@ impl Repo {
         let o = self.run_out(flags, body);
         assert!(o.ok(), "run failed:\n{o}");
         let id = o.last_line();
-        assert!(is_node_id(&id), "last line of `run` is not a node id: {id:?}\n{o}");
+        assert!(
+            is_node_id(&id),
+            "last line of `run` is not a node id: {id:?}\n{o}"
+        );
         id
     }
 
@@ -201,7 +222,10 @@ impl Repo {
             .map(String::from)
             .collect();
         // top-level keys must precede any [table]
-        let at = lines.iter().position(|l| l.trim_start().starts_with('[')).unwrap_or(lines.len());
+        let at = lines
+            .iter()
+            .position(|l| l.trim_start().starts_with('['))
+            .unwrap_or(lines.len());
         lines.insert(at, format!("{key} = {toml_value}"));
         fs::write(&p, lines.join("\n") + "\n").unwrap();
     }
@@ -248,7 +272,9 @@ pub fn count_files(dir: &Path) -> usize {
 pub fn is_node_id(s: &str) -> bool {
     let parts: Vec<&str> = s.split('-').collect();
     parts.len() == 3
-        && parts[..2].iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_lowercase()))
+        && parts[..2]
+            .iter()
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_lowercase()))
         && !parts[2].is_empty()
         && parts[2].chars().all(|c| c.is_ascii_digit())
 }
@@ -283,12 +309,18 @@ pub fn numbers(s: &str) -> Vec<f64> {
     let mut i = 0;
     while i < b.len() {
         let start = i;
-        if b[i] == '-' || b[i] == '+' { i += 1; }
+        if b[i] == '-' || b[i] == '+' {
+            i += 1;
+        }
         let ds = i;
-        while i < b.len() && (b[i].is_ascii_digit() || b[i] == '.' || b[i] == 'e' && i > ds) { i += 1; }
+        while i < b.len() && (b[i].is_ascii_digit() || b[i] == '.' || b[i] == 'e' && i > ds) {
+            i += 1;
+        }
         let tok: String = b[start..i].iter().collect();
         if i > ds {
-            if let Ok(v) = tok.trim_end_matches(['.', 'e']).parse::<f64>() { out.push(v) }
+            if let Ok(v) = tok.trim_end_matches(['.', 'e']).parse::<f64>() {
+                out.push(v)
+            }
         } else {
             i = start + 1;
         }
@@ -297,7 +329,9 @@ pub fn numbers(s: &str) -> Vec<f64> {
 }
 
 pub fn has_num(s: &str, v: f64) -> bool {
-    numbers(s).iter().any(|x| (x - v).abs() < 1e-6 * v.abs().max(1.0))
+    numbers(s)
+        .iter()
+        .any(|x| (x - v).abs() < 1e-6 * v.abs().max(1.0))
 }
 
 /// Deterministic pseudo-random bytes (xorshift64), used for fake checkpoints.
@@ -318,7 +352,11 @@ pub fn prng_bytes(len: usize, seed: u64) -> Vec<u8> {
 /// debug test build (tests share the binary's profile) gets 5x slack; `cargo test --release` checks
 /// the real number.
 pub fn budget(spec: Duration) -> Duration {
-    if cfg!(debug_assertions) { spec * 5 } else { spec }
+    if cfg!(debug_assertions) {
+        spec * 5
+    } else {
+        spec
+    }
 }
 
 pub const MB: usize = 1024 * 1024;
@@ -346,7 +384,13 @@ pub fn perturb(data: &[u8], frac: f64, n: usize, seed: u64) -> Vec<u8> {
 /// A 200-file source tree (§9 M1).
 pub fn write_200_files(r: &Repo) {
     for i in 0..200 {
-        r.write(&format!("src/pkg{}/mod{i}.py", i % 10), format!("# module {i}\ndef f{i}(x):\n    return x * {i}\n{}", "#".repeat(i * 20)));
+        r.write(
+            &format!("src/pkg{}/mod{i}.py", i % 10),
+            format!(
+                "# module {i}\ndef f{i}(x):\n    return x * {i}\n{}",
+                "#".repeat(i * 20)
+            ),
+        );
     }
 }
 

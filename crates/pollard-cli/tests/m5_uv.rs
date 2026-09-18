@@ -10,7 +10,10 @@ fn uv_repo() -> Repo {
     let r = Repo::bare();
     r.write("pyproject.toml", PYPROJECT);
     r.write("config.yaml", "lr: 3\n");
-    r.write("train.py", "import sys, os\nopen(os.environ['OUT'], 'w').write(sys.prefix)\n");
+    r.write(
+        "train.py",
+        "import sys, os\nopen(os.environ['OUT'], 'w').write(sys.prefix)\n",
+    );
     r.sh("uv lock --quiet");
     assert!(r.root.join("uv.lock").exists());
     r.ok(&["init"]);
@@ -34,27 +37,49 @@ fn run_py_file_uses_uv_run_in_uv_project() {
     let r = uv_repo();
     let (o, prefix) = run_py(&r, &["-m", "a"]);
     assert!(o.ok(), "{o}");
-    let venv = r.root.join(".venv").canonicalize().unwrap_or(r.root.join(".venv"));
-    assert!(std::path::Path::new(prefix.trim()).canonicalize().ok() == Some(venv.clone()),
-        "train.py ran with sys.prefix={prefix:?}, expected the project venv {venv:?} (i.e. via `uv run`)\n{o}");
-    assert!(r.ok(&["show", &o.last_line()]).stdout.contains("uv run"), "recorded command should be `uv run train.py`");
+    let venv = r
+        .root
+        .join(".venv")
+        .canonicalize()
+        .unwrap_or(r.root.join(".venv"));
+    assert!(
+        std::path::Path::new(prefix.trim()).canonicalize().ok() == Some(venv.clone()),
+        "train.py ran with sys.prefix={prefix:?}, expected the project venv {venv:?} (i.e. via `uv run`)\n{o}"
+    );
+    assert!(
+        r.ok(&["show", &o.last_line()]).stdout.contains("uv run"),
+        "recorded command should be `uv run train.py`"
+    );
 }
 
 #[test]
 fn run_py_file_without_uv_project_uses_python() {
     let r = Repo::init();
-    r.write("train.py", "import sys, os\nopen(os.environ['OUT'], 'w').write(sys.prefix)\n");
+    r.write(
+        "train.py",
+        "import sys, os\nopen(os.environ['OUT'], 'w').write(sys.prefix)\n",
+    );
     let (o, prefix) = run_py(&r, &["-m", "a"]);
     assert!(o.ok(), "{o}");
-    assert!(!prefix.is_empty(), "train.py did not run under plain python:\n{o}");
-    assert!(!r.root.join(".venv").exists(), "plain python launch should not create a venv");
+    assert!(
+        !prefix.is_empty(),
+        "train.py did not run under plain python:\n{o}"
+    );
+    assert!(
+        !r.root.join(".venv").exists(),
+        "plain python launch should not create a venv"
+    );
 }
 
 #[test]
 fn explicit_uv_run_accepted_verbatim() {
     let r = uv_repo();
     let out = r.aux.join("v.txt");
-    let mut c = r.cmd_in(&r.root, &bin(), &["run", "-m", "a", "--", "uv", "run", "train.py"]);
+    let mut c = r.cmd_in(
+        &r.root,
+        &bin(),
+        &["run", "-m", "a", "--", "uv", "run", "train.py"],
+    );
     c.env("OUT", &out);
     let o = r.exec(c);
     assert!(o.ok() && out.exists(), "{o}");
@@ -71,13 +96,23 @@ fn env_hash_changes_when_uv_lock_changes() {
     r.write("pyproject.toml", PYPROJECT.replace(">=3.10", ">=3.9"));
     r.sh("uv lock --quiet");
     let (o, _) = run_py(&r, &["-m", "b"]);
-    assert!(o.ok(), "a changed uv.lock was treated as a duplicate recipe:\n{o}");
+    assert!(
+        o.ok(),
+        "a changed uv.lock was treated as a duplicate recipe:\n{o}"
+    );
     let b = o.last_line();
     let env_line = |id: &str| {
         let s = r.ok(&["show", id]).stdout;
-        s.lines().find(|l| l.trim_start().starts_with("env")).map(String::from).unwrap_or_else(|| panic!("no env line in show:\n{s}"))
+        s.lines()
+            .find(|l| l.trim_start().starts_with("env"))
+            .map(String::from)
+            .unwrap_or_else(|| panic!("no env line in show:\n{s}"))
     };
-    assert_ne!(env_line(&a), env_line(&b), "env hash identical across uv.lock change");
+    assert_ne!(
+        env_line(&a),
+        env_line(&b),
+        "env hash identical across uv.lock change"
+    );
 }
 
 /// §9 M5: "a stale lock warns, and refuses with `--strict`".
@@ -87,10 +122,16 @@ fn stale_lock_warns_and_strict_refuses() {
     r.write("pyproject.toml", PYPROJECT.replace(">=3.10", ">=3.8")); // lock now stale
     let (o, _) = run_py(&r, &["-m", "strict", "--strict"]);
     assert!(!o.ok(), "--strict accepted a stale uv.lock:\n{o}");
-    assert!(ids_in(&r.ok(&["tree"]).stdout).is_empty(), "--strict refusal still created a node");
+    assert!(
+        ids_in(&r.ok(&["tree"]).stdout).is_empty(),
+        "--strict refusal still created a node"
+    );
     let (o, _) = run_py(&r, &["-m", "lenient"]);
     assert!(o.ok(), "{o}");
-    assert!(o.stderr.to_lowercase().contains("lock"), "no warning about the stale lock:\n{o}");
+    assert!(
+        o.stderr.to_lowercase().contains("lock"),
+        "no warning about the stale lock:\n{o}"
+    );
 }
 
 /// §9 M5: "`fork` leaves the venv matching the node".
@@ -104,11 +145,24 @@ fn fork_syncs_venv_to_node() {
     let (o, _) = run_py(&r, &["-m", "with six"]);
     let b = o.last_line();
     assert!(o.ok(), "{o}");
-    let has_six = || r.exec(r.cmd_in(&r.root, std::path::Path::new(".venv/bin/python"), &["-c", "import six"])).ok();
+    let has_six = || {
+        r.exec(r.cmd_in(
+            &r.root,
+            std::path::Path::new(".venv/bin/python"),
+            &["-c", "import six"],
+        ))
+        .ok()
+    };
     assert!(has_six());
     r.ok(&["fork", &a]);
-    assert!(!r.read("uv.lock").contains("name = \"six\""), "uv.lock not restored by fork");
-    assert!(!has_six(), "venv still has `six` after fork to a node without it (uv sync --frozen not run?)");
+    assert!(
+        !r.read("uv.lock").contains("name = \"six\""),
+        "uv.lock not restored by fork"
+    );
+    assert!(
+        !has_six(),
+        "venv still has `six` after fork to a node without it (uv sync --frozen not run?)"
+    );
     r.ok(&["fork", &b]);
     assert!(has_six(), "venv lacks `six` after fork to a node with it");
     // --no-sync leaves the venv alone.
@@ -123,7 +177,10 @@ fn show_prints_reproduce_one_liner() {
     let (o, _) = run_py(&r, &["-m", "a"]);
     let a = o.last_line();
     let s = r.ok(&["show", &a]).stdout;
-    assert!(s.contains(&format!("pollard fork {a} && uv sync --frozen")), "reproduce one-liner missing:\n{s}");
+    assert!(
+        s.contains(&format!("pollard fork {a} && uv sync --frozen")),
+        "reproduce one-liner missing:\n{s}"
+    );
 }
 
 #[test]
@@ -139,5 +196,8 @@ fn env_hash_without_uv_lock_falls_back() {
     let r = Repo::init();
     let a = r.run(&["-m", "a"], "true");
     let s = r.ok(&["show", &a]).stdout;
-    assert!(s.lines().any(|l| l.trim_start().starts_with("env")), "env hash missing when no uv.lock:\n{s}");
+    assert!(
+        s.lines().any(|l| l.trim_start().starts_with("env")),
+        "env hash missing when no uv.lock:\n{s}"
+    );
 }

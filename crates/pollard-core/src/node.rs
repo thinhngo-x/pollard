@@ -127,23 +127,38 @@ impl Node {
 
     /// First line of the note, for `tree`.
     pub fn title(&self) -> &str {
-        self.note.as_deref().and_then(|n| n.lines().next()).unwrap_or("")
+        self.note
+            .as_deref()
+            .and_then(|n| n.lines().next())
+            .unwrap_or("")
     }
 }
 
 pub fn get(db: &Connection, id: &str) -> Result<Option<Node>> {
-    Ok(db.query_row(&format!("SELECT {COLS} FROM nodes WHERE id=?1"), [id], Node::from_row).optional()?)
+    Ok(db
+        .query_row(
+            &format!("SELECT {COLS} FROM nodes WHERE id=?1"),
+            [id],
+            Node::from_row,
+        )
+        .optional()?)
 }
 
 pub fn all(db: &Connection) -> Result<Vec<Node>> {
     let mut st = db.prepare(&format!("SELECT {COLS} FROM nodes ORDER BY created_at, id"))?;
-    let v = st.query_map([], Node::from_row)?.collect::<rusqlite::Result<_>>()?;
+    let v = st
+        .query_map([], Node::from_row)?
+        .collect::<rusqlite::Result<_>>()?;
     Ok(v)
 }
 
 pub fn children(db: &Connection, id: &str) -> Result<Vec<Node>> {
-    let mut st = db.prepare(&format!("SELECT {COLS} FROM nodes WHERE parent=?1 ORDER BY created_at, id"))?;
-    let v = st.query_map([id], Node::from_row)?.collect::<rusqlite::Result<_>>()?;
+    let mut st = db.prepare(&format!(
+        "SELECT {COLS} FROM nodes WHERE parent=?1 ORDER BY created_at, id"
+    ))?;
+    let v = st
+        .query_map([id], Node::from_row)?
+        .collect::<rusqlite::Result<_>>()?;
     Ok(v)
 }
 

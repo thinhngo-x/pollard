@@ -27,7 +27,8 @@ fn is_uv_project(root: &Path) -> bool {
 }
 
 fn on_path(bin: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
+    std::env::var_os("PATH")
+        .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
 }
 
 /// `train.py args` → `uv run train.py args` in a uv project, else `python train.py args`.
@@ -41,7 +42,10 @@ pub fn launch_command(root: &Path, cmd: &[String]) -> Vec<String> {
             } else {
                 &["python3"]
             };
-            pre.iter().map(|s| s.to_string()).chain(cmd.iter().cloned()).collect()
+            pre.iter()
+                .map(|s| s.to_string())
+                .chain(cmd.iter().cloned())
+                .collect()
         }
         _ => cmd.to_vec(),
     }
@@ -105,7 +109,12 @@ pub fn inputs(root: &Path, cmd: &[String]) -> EnvInputs {
     };
     let requires_python = read("pyproject.toml").and_then(|t| {
         let v: toml::Value = toml::from_str(&t).ok()?;
-        Some(v.get("project")?.get("requires-python")?.as_str()?.to_string())
+        Some(
+            v.get("project")?
+                .get("requires-python")?
+                .as_str()?
+                .to_string(),
+        )
     });
     EnvInputs {
         lock,
@@ -130,8 +139,16 @@ fn packages(e: &EnvInputs) -> std::collections::BTreeMap<String, String> {
     let mut out = std::collections::BTreeMap::new();
     if let Some(lock) = &e.lock {
         if let Ok(v) = toml::from_str::<toml::Value>(lock) {
-            for p in v.get("package").and_then(|p| p.as_array()).into_iter().flatten() {
-                if let (Some(n), Some(ver)) = (p.get("name").and_then(|x| x.as_str()), p.get("version").and_then(|x| x.as_str())) {
+            for p in v
+                .get("package")
+                .and_then(|p| p.as_array())
+                .into_iter()
+                .flatten()
+            {
+                if let (Some(n), Some(ver)) = (
+                    p.get("name").and_then(|x| x.as_str()),
+                    p.get("version").and_then(|x| x.as_str()),
+                ) {
                     out.insert(n.to_string(), ver.to_string());
                 }
             }
@@ -159,12 +176,18 @@ pub fn delta(repo: &Repo, old: &str, new: &str) -> Vec<EnvChange> {
     if old == new {
         return vec![];
     }
-    let (Some(a), Some(b)) = (load(repo, old), load(repo, new)) else { return vec![] };
+    let (Some(a), Some(b)) = (load(repo, old), load(repo, new)) else {
+        return vec![];
+    };
     let (pa, pb) = (packages(&a), packages(&b));
     let keys: std::collections::BTreeSet<&String> = pa.keys().chain(pb.keys()).collect();
     keys.into_iter()
         .filter(|k| pa.get(*k) != pb.get(*k))
-        .map(|k| EnvChange { name: k.clone(), old: pa.get(k).cloned(), new: pb.get(k).cloned() })
+        .map(|k| EnvChange {
+            name: k.clone(),
+            old: pa.get(k).cloned(),
+            new: pb.get(k).cloned(),
+        })
         .collect()
 }
 
@@ -180,7 +203,10 @@ pub fn sync(root: &Path) -> Result<bool> {
         .status()
         .map_err(|e| msg(format!("uv sync --frozen: {e}")))?;
     if !st.success() {
-        return Err(msg(format!("uv sync --frozen failed in {}", root.display())));
+        return Err(msg(format!(
+            "uv sync --frozen failed in {}",
+            root.display()
+        )));
     }
     Ok(true)
 }
@@ -194,7 +220,10 @@ mod tests {
         let plain = super::launch_command(t.path(), &cmd);
         assert!(plain[0].starts_with("python") && plain[1] == "train.py");
         std::fs::write(t.path().join("pyproject.toml"), "[project]\nname='x'\n").unwrap();
-        assert_eq!(super::launch_command(t.path(), &cmd), ["uv", "run", "train.py", "seed=1"]);
+        assert_eq!(
+            super::launch_command(t.path(), &cmd),
+            ["uv", "run", "train.py", "seed=1"]
+        );
         let verbatim = vec!["uv".to_string(), "run".into(), "train.py".into()];
         assert_eq!(super::launch_command(t.path(), &verbatim), verbatim);
     }

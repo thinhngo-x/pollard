@@ -42,12 +42,18 @@ struct Member {
 }
 
 fn is_seed_path(p: &str, seed_keys: &[String]) -> bool {
-    seed_keys.iter().any(|k| p == k || p.ends_with(&format!(".{k}")))
+    seed_keys
+        .iter()
+        .any(|k| p == k || p.ends_with(&format!(".{k}")))
 }
 
 /// Deltas with seed paths removed, as a grouping key.
 fn seedless_key(d: &Deltas, seed_keys: &[String], cfg_file: Option<&str>) -> String {
-    let cfg: Vec<_> = d.config.iter().filter(|c| !is_seed_path(&c.path, seed_keys)).collect();
+    let cfg: Vec<_> = d
+        .config
+        .iter()
+        .filter(|c| !is_seed_path(&c.path, seed_keys))
+        .collect();
     serde_json::json!([cfg, delta::visible_code(d, cfg_file), d.data, d.env]).to_string()
 }
 
@@ -57,7 +63,12 @@ pub fn build(repo: &Repo, parent: &str, o: &Opts) -> Result<Table> {
         .into_iter()
         .filter(|n| o.all || n.status != Status::Pruned)
         .filter(|n| o.only.as_ref().is_none_or(|v| v.contains(&n.id)))
-        .map(|n| Ok(Member { d: delta::load(repo, &n.id)?, node: n }))
+        .map(|n| {
+            Ok(Member {
+                d: delta::load(repo, &n.id)?,
+                node: n,
+            })
+        })
         .collect::<Result<_>>()?;
 
     // Columns: sweeps collapse, then seed groups, else one per child (created_at order).
@@ -68,9 +79,10 @@ pub fn build(repo: &Repo, parent: &str, o: &Opts) -> Result<Table> {
             (Some(s), false) => Some(format!("sweep:{s}")),
             _ if o.only.is_some() => None,
             (Some(_), true) => None, // --expand-sweeps: members stand alone
-            _ if m.d.config.iter().any(|c| is_seed_path(&c.path, seed_keys)) => {
-                Some(format!("seeds:{}", seedless_key(&m.d, seed_keys, crate::wc::config_file(repo).as_deref())))
-            }
+            _ if m.d.config.iter().any(|c| is_seed_path(&c.path, seed_keys)) => Some(format!(
+                "seeds:{}",
+                seedless_key(&m.d, seed_keys, crate::wc::config_file(repo).as_deref())
+            )),
             _ => None,
         };
         match key.as_ref().and_then(|k| by_key.get(k)) {
@@ -94,7 +106,10 @@ pub fn build(repo: &Repo, parent: &str, o: &Opts) -> Result<Table> {
         } else {
             format!("{} seeds", idx.len())
         };
-        columns.push(Column { header, members: idx.iter().map(|&i| kids[i].node.id.clone()).collect() });
+        columns.push(Column {
+            header,
+            members: idx.iter().map(|&i| kids[i].node.id.clone()).collect(),
+        });
     }
 
     let cell = |idx: &[usize], f: &dyn Fn(&Member) -> Option<String>| -> Option<String> {
@@ -108,27 +123,47 @@ pub fn build(repo: &Repo, parent: &str, o: &Opts) -> Result<Table> {
 
     let mut rows = vec![];
     // config rows: union of paths, first-seen order sorted by path
-    let paths: std::collections::BTreeSet<String> =
-        kids.iter().flat_map(|m| m.d.config.iter().map(|c| c.path.clone())).collect();
+    let paths: std::collections::BTreeSet<String> = kids
+        .iter()
+        .flat_map(|m| m.d.config.iter().map(|c| c.path.clone()))
+        .collect();
     for p in paths {
         let cells = groups
             .iter()
             .map(|(_, idx)| {
-                cell(idx, &|m| m.d.config.iter().find(|c| c.path == p).map(delta::fmt_change))
+                cell(idx, &|m| {
+                    m.d.config
+                        .iter()
+                        .find(|c| c.path == p)
+                        .map(delta::fmt_change)
+                })
             })
             .collect();
-        rows.push(Row { group: "config", label: p, cells });
+        rows.push(Row {
+            group: "config",
+            label: p,
+            cells,
+        });
     }
     let cfg_file = crate::wc::config_file(repo);
-    let summaries: [(&'static str, &dyn Fn(&Member) -> String); 3] = [
-        ("code", &|m| delta::summarize_changes(&delta::visible_code(&m.d, cfg_file.as_deref()))),
+    type Summary<'a> = (&'static str, &'a dyn Fn(&Member) -> String);
+    let summaries: [Summary; 3] = [
+        ("code", &|m| {
+            delta::summarize_changes(&delta::visible_code(&m.d, cfg_file.as_deref()))
+        }),
         ("data", &|m| delta::summarize_data(&m.d.data)),
         ("env", &|m| delta::summarize_env(&m.d.env)),
     ];
     for (label, f) in summaries {
-        let cells =
-            groups.iter().map(|(_, idx)| cell(idx, &|m| Some(f(m)).filter(|s| !s.is_empty()))).collect();
-        rows.push(Row { group: label, label: label.into(), cells });
+        let cells = groups
+            .iter()
+            .map(|(_, idx)| cell(idx, &|m| Some(f(m)).filter(|s| !s.is_empty())))
+            .collect();
+        rows.push(Row {
+            group: label,
+            label: label.into(),
+            cells,
+        });
     }
 
     // metrics
@@ -159,13 +194,26 @@ pub fn build(repo: &Repo, parent: &str, o: &Opts) -> Result<Table> {
             for &i in idx {
                 *c.entry(kids[i].node.status.as_str()).or_default() += 1;
             }
-            Some(c.iter().map(|(s, n)| format!("{n} {s}")).collect::<Vec<_>>().join(" "))
+            Some(
+                c.iter()
+                    .map(|(s, n)| format!("{n} {s}"))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            )
         })
         .collect();
-    rows.push(Row { group: "status", label: "status".into(), cells });
+    rows.push(Row {
+        group: "status",
+        label: "status".into(),
+        cells,
+    });
 
     rows.retain(|r| r.cells.iter().any(|c| c.is_some()));
-    Ok(Table { parent: parent.to_string(), columns, rows })
+    Ok(Table {
+        parent: parent.to_string(),
+        columns,
+        rows,
+    })
 }
 
 fn metric_rows(
@@ -175,11 +223,17 @@ fn metric_rows(
     kids: &[Member],
     groups: &[(String, Vec<usize>)],
 ) -> Result<Vec<Row>> {
-    let series: Vec<Vec<(i64, f64)>> =
-        kids.iter().map(|m| metrics::series(&repo.db, &m.node.id, key)).collect::<Result<_>>()?;
+    let series: Vec<Vec<(i64, f64)>> = kids
+        .iter()
+        .map(|m| metrics::series(&repo.db, &m.node.id, key))
+        .collect::<Result<_>>()?;
     let pseries = metrics::series(&repo.db, parent, key)?;
     let plast = pseries.last().map(|p| p.0);
-    let at = |step: i64| plast.filter(|l| *l >= step).and_then(|_| metrics::value_at(&pseries, step));
+    let at = |step: i64| {
+        plast
+            .filter(|l| *l >= step)
+            .and_then(|_| metrics::value_at(&pseries, step))
+    };
     // last_common: largest step every non-failed child with points reached
     let last_common = kids
         .iter()
@@ -212,13 +266,19 @@ fn metric_rows(
                 )
             })
             .collect();
-        rows.push(Row { group: "metrics", label: format!("{key}@{}", fmt_step(lc)), cells });
+        rows.push(Row {
+            group: "metrics",
+            label: format!("{key}@{}", fmt_step(lc)),
+            cells,
+        });
     }
     let cells = groups
         .iter()
         .map(|(_, idx)| {
-            let vals: Vec<(f64, Option<f64>)> =
-                idx.iter().filter_map(|&i| series[i].last().map(|&(s, v)| (v, at(s)))).collect();
+            let vals: Vec<(f64, Option<f64>)> = idx
+                .iter()
+                .filter_map(|&i| series[i].last().map(|&(s, v)| (v, at(s))))
+                .collect();
             let c = fmt_group(vals)?;
             Some(match idx.as_slice() {
                 [i] => format!("{c}@{}", fmt_step(series[*i].last()?.0)),
@@ -226,7 +286,11 @@ fn metric_rows(
             })
         })
         .collect();
-    rows.push(Row { group: "metrics", label: format!("{key}@last"), cells });
+    rows.push(Row {
+        group: "metrics",
+        label: format!("{key}@last"),
+        cells,
+    });
     Ok(rows)
 }
 
@@ -241,7 +305,11 @@ pub fn fmt_num(v: f64) -> String {
     }
     let decimals = (3 - mag).max(0) as usize;
     let s = format!("{v:.decimals$}");
-    if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
+    if s.contains('.') {
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    } else {
+        s
+    }
 }
 
 /// `2.19(−.16)`; value alone without a parent value.
@@ -252,7 +320,9 @@ fn fmt_with_delta(v: f64, parent: Option<f64>) -> String {
             let d = v - p;
             let sign = if d < 0.0 { "−" } else { "+" };
             let mag = fmt_num(d.abs());
-            let mag = mag.strip_prefix("0.").map_or(mag.clone(), |r| format!(".{r}"));
+            let mag = mag
+                .strip_prefix("0.")
+                .map_or(mag.clone(), |r| format!(".{r}"));
             format!("{}({sign}{mag})", fmt_num(v))
         }
     }
@@ -286,7 +356,11 @@ pub fn render(t: &Table) -> String {
         grid.push(head);
         for r in &t.rows {
             let mut line = vec![r.label.clone()];
-            line.extend(r.cells.iter().map(|c| c.clone().unwrap_or_else(|| blank.into())));
+            line.extend(
+                r.cells
+                    .iter()
+                    .map(|c| c.clone().unwrap_or_else(|| blank.into())),
+            );
             grid.push(line);
         }
     } else {
@@ -295,15 +369,25 @@ pub fn render(t: &Table) -> String {
         grid.push(head);
         for (i, c) in t.columns.iter().enumerate() {
             let mut line = vec![c.header.clone()];
-            line.extend(t.rows.iter().map(|r| r.cells[i].clone().unwrap_or_else(|| blank.into())));
+            line.extend(
+                t.rows
+                    .iter()
+                    .map(|r| r.cells[i].clone().unwrap_or_else(|| blank.into())),
+            );
             grid.push(line);
         }
     }
     let ncol = grid[0].len();
-    let widths: Vec<usize> = (0..ncol).map(|j| grid.iter().map(|l| w(&l[j])).max().unwrap_or(0)).collect();
+    let widths: Vec<usize> = (0..ncol)
+        .map(|j| grid.iter().map(|l| w(&l[j])).max().unwrap_or(0))
+        .collect();
     let mut out = String::new();
     for l in &grid {
-        let s: Vec<String> = l.iter().enumerate().map(|(j, c)| pad(c, widths[j] + 2)).collect();
+        let s: Vec<String> = l
+            .iter()
+            .enumerate()
+            .map(|(j, c)| pad(c, widths[j] + 2))
+            .collect();
         out.push_str(s.concat().trim_end());
         out.push('\n');
     }
@@ -322,7 +406,13 @@ pub fn to_json(t: &Table) -> String {
             let cells: Vec<String> = t
                 .rows
                 .iter()
-                .map(|r| format!("{}: {}", q(&r.label), r.cells[i].as_deref().map_or("null".into(), q)))
+                .map(|r| {
+                    format!(
+                        "{}: {}",
+                        q(&r.label),
+                        r.cells[i].as_deref().map_or("null".into(), q)
+                    )
+                })
                 .collect();
             format!("  {}: {{{}}}", q(&c.header), cells.join(", "))
         })

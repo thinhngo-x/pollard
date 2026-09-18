@@ -15,39 +15,65 @@ pub fn code_opts(repo: &Repo) -> WalkOptions {
     let c = &repo.config;
     let mut ex: Vec<String> = c.output_dirs.iter().map(|g| dir_glob(g)).collect();
     ex.push(dir_glob(&c.checkpoint_dir));
-    WalkOptions { offtree: c.offtree.clone(), ..WalkOptions::code(&ex) }
+    WalkOptions {
+        offtree: c.offtree.clone(),
+        config_file: config_file(repo),
+        ..WalkOptions::code(&ex)
+    }
 }
 
 /// Anchor bare directory names (`outputs` → `outputs/`) so they match the whole dir.
 fn dir_glob(g: &str) -> String {
     let g = g.trim_start_matches("./");
-    if !g.contains('*') && !g.ends_with('/') && !g.contains('.') { format!("{g}/") } else { g.to_string() }
+    if !g.contains('*') && !g.ends_with('/') && !g.contains('.') {
+        format!("{g}/")
+    } else {
+        g.to_string()
+    }
 }
 
 /// Walk rules for off-tree docs: only files matching `offtree`.
 pub fn docs_opts(repo: &Repo) -> WalkOptions {
-    WalkOptions { offtree: repo.config.offtree.clone(), offtree_only: true, ignore_files: true, ..Default::default() }
+    WalkOptions {
+        offtree: repo.config.offtree.clone(),
+        config_file: config_file(repo),
+        offtree_only: true,
+        ignore_files: true,
+        ..Default::default()
+    }
 }
 
 /// Git tree hash of a stored code manifest; remembers the mapping in `code_trees`.
 pub fn code_hash(repo: &Repo, m: &Manifest) -> Result<String> {
     let mh = m.hash();
-    let tree = pollard_git::tree_hash(&repo.objects, m).map_err(|e| msg(format!("git tree hash: {e}")))?;
-    repo.db.execute("INSERT OR IGNORE INTO code_trees(git_tree, manifest_hash) VALUES(?1,?2)", [&tree, &mh])?;
+    let tree =
+        pollard_git::tree_hash(&repo.objects, m).map_err(|e| msg(format!("git tree hash: {e}")))?;
+    repo.db.execute(
+        "INSERT OR IGNORE INTO code_trees(git_tree, manifest_hash) VALUES(?1,?2)",
+        [&tree, &mh],
+    )?;
     Ok(tree)
 }
 
 /// Code manifest hash for a node's `code` (git tree hash).
 pub fn manifest_of(repo: &Repo, git_tree: &str) -> Result<String> {
     repo.db
-        .query_row("SELECT manifest_hash FROM code_trees WHERE git_tree=?1", [git_tree], |r| r.get(0))
+        .query_row(
+            "SELECT manifest_hash FROM code_trees WHERE git_tree=?1",
+            [git_tree],
+            |r| r.get(0),
+        )
         .optional()?
         .ok_or_else(|| msg(format!("no stored code manifest for tree {git_tree}")))
 }
 
 /// Store the current working copy (code scope) and return its manifest hash.
 pub fn snapshot_manifest(repo: &Repo) -> Result<String> {
-    Ok(repo.objects.snapshot_dir(&repo.root, &code_opts(repo))?.manifest.hash())
+    Ok(repo
+        .objects
+        .snapshot_dir(&repo.root, &code_opts(repo))?
+        .manifest
+        .hash())
 }
 
 /// Make the code scope of the working copy match a stored manifest.
@@ -86,8 +112,13 @@ pub fn capture_mode(repo: &Repo) -> Capture {
 /// Parse a YAML or JSON config file into JSON.
 pub fn read_config_file(path: &Path) -> Result<Value> {
     let text = std::fs::read_to_string(path).at(path)?;
-    let v: Value = serde_yaml::from_str(&text).map_err(|e| msg(format!("{}: {e}", path.display())))?;
-    Ok(if v.is_null() { Value::Object(Default::default()) } else { v })
+    let v: Value =
+        serde_yaml::from_str(&text).map_err(|e| msg(format!("{}: {e}", path.display())))?;
+    Ok(if v.is_null() {
+        Value::Object(Default::default())
+    } else {
+        v
+    })
 }
 
 /// Hydra-style `key.path=value` overrides from the launch args (leading `+`/`++` allowed).
@@ -98,9 +129,15 @@ pub fn overrides(args: &[String]) -> Vec<(String, Value)> {
             let k = k.trim_start_matches('+');
             let ok = !k.is_empty()
                 && !k.starts_with('-')
-                && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+                && k.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
                 && !k.starts_with('.');
-            ok.then(|| (k.to_string(), serde_yaml::from_str::<Value>(v).unwrap_or(Value::String(v.into()))))
+            ok.then(|| {
+                (
+                    k.to_string(),
+                    serde_yaml::from_str::<Value>(v).unwrap_or(Value::String(v.into())),
+                )
+            })
         })
         .collect()
 }
@@ -118,14 +155,18 @@ pub fn apply_overrides(cfg: &mut Value, ovs: &[(String, Value)]) {
                 obj.insert(p.to_string(), v.clone());
                 break;
             }
-            cur = obj.entry(p.to_string()).or_insert(Value::Object(Default::default()));
+            cur = obj
+                .entry(p.to_string())
+                .or_insert(Value::Object(Default::default()));
         }
     }
 }
 
 /// Store the canonical JSON (sorted keys) of a config; the object hash is the `config` hash.
 pub fn store_config(repo: &Repo, cfg: &Value) -> Result<String> {
-    Ok(repo.objects.put_object(serde_json::to_string(cfg)?.as_bytes())?)
+    Ok(repo
+        .objects
+        .put_object(serde_json::to_string(cfg)?.as_bytes())?)
 }
 
 pub fn load_config(repo: &Repo, hash: &str) -> Result<Value> {
@@ -139,7 +180,12 @@ pub fn data_manifest(repo: &Repo) -> Result<String> {
     let mut entries = vec![];
     for root in &repo.config.data {
         if root.contains("://") {
-            entries.push(Entry { path: root.clone(), size: 0, hash: crate::b3(root.as_bytes()), mode: 0 });
+            entries.push(Entry {
+                path: root.clone(),
+                size: 0,
+                hash: crate::b3(root.as_bytes()),
+                mode: 0,
+            });
             continue;
         }
         let base = repo.root.join(root);
@@ -147,14 +193,23 @@ pub fn data_manifest(repo: &Repo) -> Result<String> {
             eprintln!("warning: data root {} does not exist", base.display());
             continue;
         }
-        for ent in ignore::WalkBuilder::new(&base).standard_filters(false).build() {
+        for ent in ignore::WalkBuilder::new(&base)
+            .standard_filters(false)
+            .build()
+        {
             let ent = ent.map_err(|e| msg(format!("{}: {e}", base.display())))?;
-            let md = ent.metadata().map_err(|e| msg(format!("{}: {e}", ent.path().display())))?;
+            let md = ent
+                .metadata()
+                .map_err(|e| msg(format!("{}: {e}", ent.path().display())))?;
             if !md.is_file() {
                 continue;
             }
             let p = ent.path();
-            let rel = p.strip_prefix(&repo.root).unwrap_or(p).to_string_lossy().into_owned();
+            let rel = p
+                .strip_prefix(&repo.root)
+                .unwrap_or(p)
+                .to_string_lossy()
+                .into_owned();
             let mtime = md
                 .modified()
                 .ok()
@@ -180,7 +235,12 @@ pub fn data_manifest(repo: &Repo) -> Result<String> {
                     h
                 }
             };
-            entries.push(Entry { path: rel, size: size as u64, hash, mode: 0o100644 });
+            entries.push(Entry {
+                path: rel,
+                size: size as u64,
+                hash,
+                mode: 0o100644,
+            });
         }
     }
     Ok(repo.objects.put_manifest(&Manifest::new(entries))?)
@@ -193,13 +253,23 @@ mod tests {
 
     #[test]
     fn overrides_apply() {
-        let args: Vec<String> = ["train.py", "seed=3", "model.depth=24", "--flag", "+opt.name=adam", "a=b=c"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let args: Vec<String> = [
+            "train.py",
+            "seed=3",
+            "model.depth=24",
+            "--flag",
+            "+opt.name=adam",
+            "a=b=c",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         let ovs = overrides(&args);
         let mut cfg = json!({"lr": 0.1, "model": {"depth": 12}});
         apply_overrides(&mut cfg, &ovs);
-        assert_eq!(cfg, json!({"lr": 0.1, "seed": 3, "model": {"depth": 24}, "opt": {"name": "adam"}, "a": "b=c"}));
+        assert_eq!(
+            cfg,
+            json!({"lr": 0.1, "seed": 3, "model": {"depth": 24}, "opt": {"name": "adam"}, "a": "b=c"})
+        );
     }
 }

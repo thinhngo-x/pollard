@@ -22,7 +22,9 @@ pub fn make(salt: &str, counter: u64) -> String {
 
 /// Per-clone 64-bit salt (16 hex chars): not cryptographic, just distinct across clones.
 pub fn new_salt(root: &std::path::Path) -> String {
-    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
     let mut h = blake3::Hasher::new();
     h.update(&t.as_nanos().to_le_bytes());
     h.update(&std::process::id().to_le_bytes());
@@ -37,8 +39,16 @@ mod tests {
         let a = super::make("s1", 7);
         assert!(a.ends_with("-7") && a.split('-').count() == 3);
         assert_eq!(a, super::make("s1", 7));
-        let differ = (1..20).filter(|c| super::make("s1", *c) != super::make("s2", *c)).count();
+        let differ = (1..20)
+            .filter(|c| super::make("s1", *c) != super::make("s2", *c))
+            .count();
         assert!(differ > 15);
-        assert_eq!((super::words(super::ADJ_TXT).len(), super::words(super::NOUN_TXT).len()), (1000, 1000));
+        assert_eq!(
+            (
+                super::words(super::ADJ_TXT).len(),
+                super::words(super::NOUN_TXT).len()
+            ),
+            (1000, 1000)
+        );
     }
 }

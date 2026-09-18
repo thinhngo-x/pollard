@@ -41,7 +41,10 @@ pub struct Launch {
 fn shell_join(argv: &[String]) -> String {
     argv.iter()
         .map(|a| {
-            if !a.is_empty() && a.chars().all(|c| c.is_ascii_alphanumeric() || "-_./=:,+@%".contains(c)) {
+            if !a.is_empty()
+                && a.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-_./=:,+@%".contains(c))
+            {
                 a.clone()
             } else {
                 format!("'{}'", a.replace('\'', r"'\''"))
@@ -56,7 +59,8 @@ pub fn run_dir(repo: &Repo, node: &str) -> PathBuf {
 }
 
 pub fn ckpt_dir(repo: &Repo) -> PathBuf {
-    repo.root.join(repo.config.checkpoint_dir.trim_start_matches("./"))
+    repo.root
+        .join(repo.config.checkpoint_dir.trim_start_matches("./"))
 }
 
 /// Snapshot the working copy and create the node (status `running`) as one op.
@@ -87,16 +91,24 @@ pub fn start(repo: &mut Repo, o: &RunOpts) -> Result<(OpRecord, Launch)> {
     let lock_ok = env::lock_check(&repo.root);
     if lock_ok == Some(false) {
         if o.strict {
-            return Err(msg(format!("uv.lock in {} is out of date (uv lock --check failed); refusing with --strict", repo.root.display())));
+            return Err(msg(format!(
+                "uv.lock in {} is out of date (uv lock --check failed); refusing with --strict",
+                repo.root.display()
+            )));
         }
         eprintln!("warning: uv.lock is out of date (uv lock --check failed)");
     }
     let env_hash = env::store(repo, &env::inputs(&repo.root, &o.cmd))?;
 
     // code
-    let snap = repo.objects.snapshot_dir(&repo.root, &wc::code_opts(repo))?;
+    let snap = repo
+        .objects
+        .snapshot_dir(&repo.root, &wc::code_opts(repo))?;
     for (p, size) in &snap.oversized {
-        eprintln!("warning: {p} is {:.1} MB (> 10 MB); left out of the code manifest, treat it as data", *size as f64 / 1e6);
+        eprintln!(
+            "warning: {p} is {:.1} MB (> 10 MB); left out of the code manifest, treat it as data",
+            *size as f64 / 1e6
+        );
     }
     let manifest_hash = snap.manifest.hash();
     let code = wc::code_hash(repo, &snap.manifest)?;
@@ -106,7 +118,11 @@ pub fn start(repo: &mut Repo, o: &RunOpts) -> Result<(OpRecord, Launch)> {
     let mut cfg = match &capture {
         Capture::File(p) => {
             let path = repo.root.join(p);
-            if path.is_file() { wc::read_config_file(&path)? } else { Value::Object(Default::default()) }
+            if path.is_file() {
+                wc::read_config_file(&path)?
+            } else {
+                Value::Object(Default::default())
+            }
         }
         _ => Value::Object(Default::default()),
     };
@@ -114,7 +130,9 @@ pub fn start(repo: &mut Repo, o: &RunOpts) -> Result<(OpRecord, Launch)> {
     let config = wc::store_config(repo, &cfg)?;
 
     let data = wc::data_manifest(repo)?;
-    let docs_snap = repo.objects.snapshot_dir(&repo.root, &wc::docs_opts(repo))?;
+    let docs_snap = repo
+        .objects
+        .snapshot_dir(&repo.root, &wc::docs_opts(repo))?;
     let docs = (!docs_snap.manifest.entries.is_empty()).then(|| docs_snap.manifest.hash());
 
     let recipe = node::recipe_hash(&code, &config, &data, &env_hash);
@@ -129,7 +147,9 @@ pub fn start(repo: &mut Repo, o: &RunOpts) -> Result<(OpRecord, Launch)> {
             )
             .optional()?;
         match dup {
-            Some((d, st)) if (st == "running" || st == "done") && !o.force => return Err(Error::Duplicate(d)),
+            Some((d, st)) if (st == "running" || st == "done") && !o.force => {
+                return Err(Error::Duplicate(d));
+            }
             Some((d, st)) if st != "running" && st != "done" => {
                 eprintln!("note: same recipe as {d} ({st}); running again")
             }
@@ -142,13 +162,22 @@ pub fn start(repo: &mut Repo, o: &RunOpts) -> Result<(OpRecord, Launch)> {
         Some(p) => compute_deltas(repo, p, &snap.manifest, &cfg, &data, &env_hash)?,
         None => Deltas::default(),
     };
-    let added = deltas.code.iter().filter(|c| c.kind == pollard_objects::ChangeKind::Added).count();
+    let added = deltas
+        .code
+        .iter()
+        .filter(|c| c.kind == pollard_objects::ChangeKind::Added)
+        .count();
     if added > 500 {
-        eprintln!("warning: {added} new files since the parent; add build/output dirs to .pollardignore or output_dirs");
+        eprintln!(
+            "warning: {added} new files since the parent; add build/output dirs to .pollardignore or output_dirs"
+        );
     }
 
     let (note, note_auto) = if o.notes.is_empty() {
-        (delta::auto_note(&deltas, wc::config_file(repo).as_deref()), true)
+        (
+            delta::auto_note(&deltas, wc::config_file(repo).as_deref()),
+            true,
+        )
     } else {
         (o.notes.join("\n\n"), false)
     };
@@ -182,7 +211,14 @@ pub fn start(repo: &mut Repo, o: &RunOpts) -> Result<(OpRecord, Launch)> {
         repo.del_meta("fork_step")?;
         Ok(n.id.clone())
     })?;
-    let launch = Launch { node: id, argv, fork_step, capture, parent, note_auto: note_auto.then_some(note) };
+    let launch = Launch {
+        node: id,
+        argv,
+        fork_step,
+        capture,
+        parent,
+        note_auto: note_auto.then_some(note),
+    };
     Ok((rec, launch))
 }
 
@@ -199,14 +235,22 @@ pub fn compute_deltas(
         Ok(h) => Some(repo.objects.get_manifest(&h)?),
         Err(_) => None,
     };
-    let code_delta = pcode.map(|pc| pollard_objects::diff(&pc, code)).unwrap_or_default();
+    let code_delta = pcode
+        .map(|pc| pollard_objects::diff(&pc, code))
+        .unwrap_or_default();
     let pcfg = wc::load_config(repo, &parent.config)?;
     let pdata = repo.objects.get_manifest(&parent.data)?;
     let ndata = repo.objects.get_manifest(data)?;
     let changes = pollard_objects::diff(&pdata, &ndata);
     let data_delta = delta::DataDelta {
-        files_added: changes.iter().filter(|c| c.kind == pollard_objects::ChangeKind::Added).count() as u64,
-        files_removed: changes.iter().filter(|c| c.kind == pollard_objects::ChangeKind::Removed).count() as u64,
+        files_added: changes
+            .iter()
+            .filter(|c| c.kind == pollard_objects::ChangeKind::Added)
+            .count() as u64,
+        files_removed: changes
+            .iter()
+            .filter(|c| c.kind == pollard_objects::ChangeKind::Removed)
+            .count() as u64,
         bytes_delta: ndata.total_size() as i64 - pdata.total_size() as i64,
         changes,
     };
@@ -227,7 +271,9 @@ struct Tail {
 
 impl Tail {
     fn poll(&mut self, repo: &Repo, node: &str, flush: bool) -> Result<usize> {
-        let Ok(mut f) = std::fs::File::open(&self.path) else { return Ok(0) };
+        let Ok(mut f) = std::fs::File::open(&self.path) else {
+            return Ok(0);
+        };
         f.seek(SeekFrom::Start(self.pos)).at(&self.path)?;
         let mut r = BufReader::new(f);
         let mut n = 0;
@@ -243,7 +289,11 @@ impl Tail {
             self.line_no += 1;
             let k = metrics::ingest_line(&repo.db, node, &buf)?;
             if k == 0 && !buf.trim().is_empty() {
-                eprintln!("warning: {}:{}: skipped malformed metrics line", self.path.display(), self.line_no);
+                eprintln!(
+                    "warning: {}:{}: skipped malformed metrics line",
+                    self.path.display(),
+                    self.line_no
+                );
             }
             n += k;
         }
@@ -286,7 +336,11 @@ pub fn execute(repo: &Repo, l: &Launch) -> Result<i32> {
             return Err(msg(format!("{}: failed to launch: {e}", l.argv[0])));
         }
     };
-    let mut tail = Tail { path: metrics_path, pos: 0, line_no: 0 };
+    let mut tail = Tail {
+        path: metrics_path,
+        pos: 0,
+        line_no: 0,
+    };
     let mut config_done = !matches!(l.capture, Capture::Sdk);
     // Poll metrics every 200 ms (D-9); check for exit every 20 ms so short runs return fast.
     let mut tick = 0u32;
@@ -314,7 +368,10 @@ pub fn execute(repo: &Repo, l: &Launch) -> Result<i32> {
     use std::os::unix::process::ExitStatusExt;
     let st = if status.success() {
         Status::Done
-    } else if status.signal().is_some() || interrupted.load(Ordering::SeqCst) || status.code() == Some(130) {
+    } else if status.signal().is_some()
+        || interrupted.load(Ordering::SeqCst)
+        || status.code() == Some(130)
+    {
         Status::Killed
     } else {
         Status::Failed
@@ -349,20 +406,31 @@ fn set_config(repo: &Repo, node_id: &str, cfg: &Value) -> Result<()> {
     if let Some(d) = dup {
         eprintln!("warning: {node_id} has the same recipe as {d}");
     }
-    repo.db.execute("UPDATE nodes SET config=?1, recipe_hash=?2 WHERE id=?3", params![config, recipe, node_id])?;
+    repo.db.execute(
+        "UPDATE nodes SET config=?1, recipe_hash=?2 WHERE id=?3",
+        params![config, recipe, node_id],
+    )?;
     if let Some(p) = &n.parent {
         let mut d = delta::load(repo, node_id)?;
         d.config = delta::config_delta(&wc::load_config(repo, &repo.node(p)?.config)?, cfg);
         delta::store(repo, node_id, &d)?;
         if n.note_auto && !d.config.is_empty() {
-            repo.db.execute("UPDATE nodes SET note=?1 WHERE id=?2", params![delta::auto_note(&d, wc::config_file(repo).as_deref()), node_id])?;
+            repo.db.execute(
+                "UPDATE nodes SET note=?1 WHERE id=?2",
+                params![
+                    delta::auto_note(&d, wc::config_file(repo).as_deref()),
+                    node_id
+                ],
+            )?;
         }
     }
     Ok(())
 }
 
 fn capture_sdk_config(repo: &Repo, node: &str, path: &Path) -> Result<bool> {
-    let Ok(mut cfg) = wc::read_config_file(path) else { return Ok(false) }; // partially written
+    let Ok(mut cfg) = wc::read_config_file(path) else {
+        return Ok(false);
+    }; // partially written
     let n = repo.node(node)?;
     wc::apply_overrides(&mut cfg, &wc::overrides(&shell_words(&n.command)));
     set_config(repo, node, &cfg)?;
@@ -373,7 +441,11 @@ fn capture_sdk_config(repo: &Repo, node: &str, path: &Path) -> Result<bool> {
 fn capture_hydra_config(repo: &Repo, node: &str) -> Result<()> {
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
     for d in &repo.config.output_dirs {
-        for ent in ignore::WalkBuilder::new(repo.root.join(d)).standard_filters(false).build().flatten() {
+        for ent in ignore::WalkBuilder::new(repo.root.join(d))
+            .standard_filters(false)
+            .build()
+            .flatten()
+        {
             let p = ent.path();
             if p.ends_with(".hydra/config.yaml") {
                 if let Ok(t) = p.metadata().and_then(|m| m.modified()) {
@@ -426,7 +498,10 @@ fn shell_words(s: &str) -> Vec<String> {
 mod tests {
     #[test]
     fn quoting_roundtrip() {
-        let argv: Vec<String> = ["uv", "run", "train.py", "seed=1", "it's here", ""].iter().map(|s| s.to_string()).collect();
+        let argv: Vec<String> = ["uv", "run", "train.py", "seed=1", "it's here", ""]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert_eq!(super::shell_words(&super::shell_join(&argv)), argv);
     }
 }

@@ -1,0 +1,81 @@
+name: Release
+
+# Runs only on a version tag push - never on plain pushes to main, so it can't fire by accident.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # needed to create the draft GitHub release and upload assets
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-binaries:
+    # x86_64-unknown-linux-gnu only for now (this machine's target, and SPEC.md §11 rules out
+    # Windows for v1). macOS/arm64 builds are a follow-up once we have runner coverage for them.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: cargo build --release --workspace --target x86_64-unknown-linux-gnu
+
+      - name: Package
+        run: |
+          cd target/x86_64-unknown-linux-gnu/release
+          tar czf pollard-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz pollard po
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-binaries
+          path: target/x86_64-unknown-linux-gnu/release/pollard-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
+
+  build-wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.10"
+
+      - name: Build wheel
+        working-directory: python
+        run: uv build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-wheel
+          path: python/dist/*
+
+  release:
+    needs: [build-binaries, build-wheel]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true # publish manually once someone has reviewed the notes
+          files: |
+            artifacts/linux-binaries/*
+            artifacts/python-wheel/*
+
+  # Publishing to crates.io / PyPI is deliberately NOT automated here - it stays a manual
+  # `cargo publish` / `uv publish` step per docs/RELEASE.md, coordinated with the PM.
+  # If that ever gets automated, it needs repo secrets configured first and referenced as
+  # ${{ secrets.CARGO_REGISTRY_TOKEN }} and ${{ secrets.PYPI_API_TOKEN }} - neither exists yet.

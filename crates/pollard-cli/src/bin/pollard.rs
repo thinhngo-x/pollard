@@ -10,7 +10,11 @@ use clap::{Parser, Subcommand};
 use pollard_core::{Repo, cmd, gitops, metrics, ops, run, siblings, sync, tree, weights};
 
 #[derive(Parser)]
-#[command(name = "pollard", version, about = "Tree-based experiment version control")]
+#[command(
+    name = "pollard",
+    version,
+    about = "Tree-based experiment version control"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -168,7 +172,7 @@ fn running_node() -> String {
     std::env::var("POLLARD_NODE_ID").unwrap_or_else(|_| "@".into())
 }
 
-fn main() -> ExitCode {
+pub(crate) fn main() -> ExitCode {
     let cli = Cli::parse();
     match dispatch(cli.cmd) {
         Ok(code) => ExitCode::from(code),
@@ -192,7 +196,14 @@ fn dispatch(c: Cmd) -> Result<u8> {
                 println!("{id}");
             }
         }
-        Cmd::Run { message, parent, sweep, force, strict, cmd } => {
+        Cmd::Run {
+            message,
+            parent,
+            sweep,
+            force,
+            strict,
+            cmd,
+        } => {
             let mut repo = open()?;
             let mut notes = vec![];
             for m in message {
@@ -204,10 +215,28 @@ fn dispatch(c: Cmd) -> Result<u8> {
                     notes.push(m);
                 }
             }
-            let (op, l) = run::start(&mut repo, &run::RunOpts { notes, parent, sweep, force, strict, cmd })?;
-            let parent = l.parent.as_deref().map(|p| format!("  ← {p}")).unwrap_or_default();
+            let (op, l) = run::start(
+                &mut repo,
+                &run::RunOpts {
+                    notes,
+                    parent,
+                    sweep,
+                    force,
+                    strict,
+                    cmd,
+                },
+            )?;
+            let parent = l
+                .parent
+                .as_deref()
+                .map(|p| format!("  ← {p}"))
+                .unwrap_or_default();
             let at = l.fork_step.map(|s| format!(" @{s}")).unwrap_or_default();
-            println!("node  {}{parent}{at}   launching: {}", op.node, l.argv.join(" "));
+            println!(
+                "node  {}{parent}{at}   launching: {}",
+                op.node,
+                l.argv.join(" ")
+            );
             if let Some(n) = &l.note_auto {
                 println!("note(auto): {n}");
             }
@@ -215,7 +244,11 @@ fn dispatch(c: Cmd) -> Result<u8> {
             println!("{}", op.node);
             return Ok(code.clamp(0, 255) as u8);
         }
-        Cmd::Fork { node, step, no_sync } => {
+        Cmd::Fork {
+            node,
+            step,
+            no_sync,
+        } => {
             let mut repo = open()?;
             let f = cmd::fork(&mut repo, &node, step, no_sync)?;
             for n in &f.notices {
@@ -236,13 +269,28 @@ fn dispatch(c: Cmd) -> Result<u8> {
             let repo = open()?;
             print!("{}", cmd::diff(&repo, &a, &b, docs)?);
         }
-        Cmd::Siblings { node, metric, expand_sweeps, all, json } => {
+        Cmd::Siblings {
+            node,
+            metric,
+            expand_sweeps,
+            all,
+            json,
+        } => {
             let repo = open()?;
             let parent = match node {
                 Some(n) => repo.resolve(&n)?,
                 None => repo.resolve("@-")?,
             };
-            let t = siblings::build(&repo, &parent, &siblings::Opts { metric, expand_sweeps, all, only: None })?;
+            let t = siblings::build(
+                &repo,
+                &parent,
+                &siblings::Opts {
+                    metric,
+                    expand_sweeps,
+                    all,
+                    only: None,
+                },
+            )?;
             if json {
                 println!("{}", siblings::to_json(&t));
             } else if t.columns.is_empty() {
@@ -271,7 +319,12 @@ fn dispatch(c: Cmd) -> Result<u8> {
             let mut repo = open()?;
             println!("{}", cmd::unpin(&mut repo, &name)?.node);
         }
-        Cmd::Note { node, text, edit, append } => {
+        Cmd::Note {
+            node,
+            text,
+            edit,
+            append,
+        } => {
             let mut repo = open()?;
             let id = repo.resolve(&node)?;
             let text = match (text, edit, append) {
@@ -292,7 +345,10 @@ fn dispatch(c: Cmd) -> Result<u8> {
                 println!("M {p}");
             }
             if !a.conflicts.is_empty() {
-                eprintln!("warning: conflicts in {} (markers left in place)", a.conflicts.join(", "));
+                eprintln!(
+                    "warning: conflicts in {} (markers left in place)",
+                    a.conflicts.join(", ")
+                );
             }
             println!("{}", a.op.node);
         }
@@ -306,7 +362,11 @@ fn dispatch(c: Cmd) -> Result<u8> {
             let single = keys.len() == 1;
             for k in keys {
                 for (s, v) in metrics::series(&repo.db, &id, &k)? {
-                    if single { println!("{s}\t{v}") } else { println!("{k}\t{s}\t{v}") }
+                    if single {
+                        println!("{s}\t{v}")
+                    } else {
+                        println!("{k}\t{s}\t{v}")
+                    }
                 }
             }
         }
@@ -315,13 +375,18 @@ fn dispatch(c: Cmd) -> Result<u8> {
                 bail!("give at least one path");
             }
             let mut repo = open()?;
-            println!("{}", weights::attach(&mut repo, &running_node(), &paths)?.node);
+            println!(
+                "{}",
+                weights::attach(&mut repo, &running_node(), &paths)?.node
+            );
         }
         Cmd::Undo { n } => {
             let mut repo = open()?;
             println!("{}", ops::undo(&mut repo, n)?.node);
         }
-        Cmd::Op { cmd: OpCmd::Log { limit } } => {
+        Cmd::Op {
+            cmd: OpCmd::Log { limit },
+        } => {
             let repo = open()?;
             for e in ops::log(&repo, limit)? {
                 println!("{:>5}  {}  {}", e.op_id, e.ts, e.command);
@@ -369,21 +434,44 @@ fn dispatch(c: Cmd) -> Result<u8> {
 /// Journey A's `root <id> (git abc1234) code ✓ config ✓ data N files ✓ env uv.lock ✓ offtree: …` line.
 fn root_summary(repo: &Repo, id: &str) -> Result<String> {
     let n = repo.node(id)?;
-    let git = n.note.as_deref().and_then(|t| t.split("(git ").nth(1)).map(|t| t.trim_end_matches(')')).unwrap_or("?");
+    let git = n
+        .note
+        .as_deref()
+        .and_then(|t| t.split("(git ").nth(1))
+        .map(|t| t.trim_end_matches(')'))
+        .unwrap_or("?");
     let data = repo.objects.get_manifest(&n.data)?.entries.len();
-    let env = if repo.root.join("uv.lock").is_file() { "uv.lock" } else { "freeze" };
+    let env = if repo.root.join("uv.lock").is_file() {
+        "uv.lock"
+    } else {
+        "freeze"
+    };
     let docs: Vec<String> = match &n.docs {
-        Some(d) => repo.objects.get_manifest(d)?.entries.into_iter().map(|e| e.path).collect(),
+        Some(d) => repo
+            .objects
+            .get_manifest(d)?
+            .entries
+            .into_iter()
+            .map(|e| e.path)
+            .collect(),
         None => vec![],
     };
-    let off = if docs.is_empty() { String::new() } else { format!(" offtree: {}", docs.join(", ")) };
-    Ok(format!("root  {id}  (git {git})  code ✓ config ✓ data {data} files ✓ env {env} ✓{off}"))
+    let off = if docs.is_empty() {
+        String::new()
+    } else {
+        format!(" offtree: {}", docs.join(", "))
+    };
+    Ok(format!(
+        "root  {id}  (git {git})  code ✓ config ✓ data {data} files ✓ env {env} ✓{off}"
+    ))
 }
 
 fn edit_note(repo: &Repo, id: &str) -> Result<String> {
     let path = repo.dot.join(format!("NOTE_EDITMSG-{id}"));
     std::fs::write(&path, repo.node(id)?.note.unwrap_or_default())?;
-    let editor = std::env::var("VISUAL").or_else(|_| std::env::var("EDITOR")).unwrap_or_else(|_| "vi".into());
+    let editor = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "vi".into());
     let st = std::process::Command::new("sh")
         .arg("-c")
         .arg(format!("{editor} \"$1\""))
@@ -404,8 +492,22 @@ fn show(repo: &Repo, node: &str) -> Result<String> {
     let n = repo.node(&repo.resolve(node)?)?;
     let mut o = String::new();
     let pins = repo.pins_of(&n.id)?;
-    writeln!(o, "node      {}{}", n.id, if pins.is_empty() { String::new() } else { format!("  [{}]", pins.join(", ")) })?;
-    writeln!(o, "parent    {}{}", n.parent.as_deref().unwrap_or("(root)"), n.fork_step.map(|s| format!(" @{s}")).unwrap_or_default())?;
+    writeln!(
+        o,
+        "node      {}{}",
+        n.id,
+        if pins.is_empty() {
+            String::new()
+        } else {
+            format!("  [{}]", pins.join(", "))
+        }
+    )?;
+    writeln!(
+        o,
+        "parent    {}{}",
+        n.parent.as_deref().unwrap_or("(root)"),
+        n.fork_step.map(|s| format!(" @{s}")).unwrap_or_default()
+    )?;
     writeln!(o, "status    {}", n.status.as_str())?;
     if let Some(s) = &n.sweep {
         writeln!(o, "sweep     {s}")?;
@@ -437,7 +539,13 @@ fn show(repo: &Repo, node: &str) -> Result<String> {
             let s = metrics::series(&repo.db, &n.id, &k)?;
             if let Some(&(st, v)) = s.last() {
                 last_step = last_step.max(Some(st));
-                writeln!(o, "  {k}  {}  @{}  ({} points)", siblings::fmt_num(v), st, s.len())?;
+                writeln!(
+                    o,
+                    "  {k}  {}  @{}  ({} points)",
+                    siblings::fmt_num(v),
+                    st,
+                    s.len()
+                )?;
             }
         }
     }
@@ -448,7 +556,10 @@ fn show(repo: &Repo, node: &str) -> Result<String> {
         let m = repo.objects.get_manifest(w)?;
         let ck = weights::checkpoints(repo, &n)?;
         if !ck.is_empty() {
-            let steps: Vec<String> = ck.iter().map(|(e, s)| s.map_or(e.path.clone(), siblings::fmt_step)).collect();
+            let steps: Vec<String> = ck
+                .iter()
+                .map(|(e, s)| s.map_or(e.path.clone(), siblings::fmt_step))
+                .collect();
             writeln!(o, "checkpoints: {}", steps.join(" "))?;
         }
         writeln!(o, "weights   {w}")?;

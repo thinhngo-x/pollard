@@ -27,7 +27,10 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("remote {url}: {source}")]
-    Store { url: String, source: object_store::Error },
+    Store {
+        url: String,
+        source: object_store::Error,
+    },
     #[error("remote {url}: bad pack index {name}")]
     BadIndex { url: String, name: String },
     #[error(transparent)]
@@ -63,7 +66,10 @@ impl Remote {
         let setup = |e: &dyn std::fmt::Display| Error::Setup(url.into(), e.to_string());
         let store: Arc<dyn ObjectStore> = if let Some(rest) = url.strip_prefix("s3://") {
             let (bucket, prefix) = rest.split_once('/').unwrap_or((rest, ""));
-            let s3 = AmazonS3Builder::from_env().with_bucket_name(bucket).build().map_err(|e| setup(&e))?;
+            let s3 = AmazonS3Builder::from_env()
+                .with_bucket_name(bucket)
+                .build()
+                .map_err(|e| setup(&e))?;
             if prefix.trim_matches('/').is_empty() {
                 Arc::new(s3)
             } else {
@@ -75,12 +81,22 @@ impl Remote {
             std::fs::create_dir_all(url).map_err(|e| setup(&e))?;
             Arc::new(LocalFileSystem::new_with_prefix(url).map_err(|e| setup(&e))?)
         };
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| setup(&e))?;
-        Ok(Remote { url: url.into(), store, rt })
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| setup(&e))?;
+        Ok(Remote {
+            url: url.into(),
+            store,
+            rt,
+        })
     }
 
     fn err(&self, source: object_store::Error) -> Error {
-        Error::Store { url: self.url.clone(), source }
+        Error::Store {
+            url: self.url.clone(),
+            source,
+        }
     }
 
     /// Whole file, or `None` if absent.
@@ -106,27 +122,49 @@ impl Remote {
     fn list(&self, prefix: &str) -> Result<Vec<String>> {
         let v: Vec<_> = self
             .rt
-            .block_on(self.store.list(Some(&OPath::from(prefix))).try_collect::<Vec<_>>())
+            .block_on(
+                self.store
+                    .list(Some(&OPath::from(prefix)))
+                    .try_collect::<Vec<_>>(),
+            )
             .map_err(|e| self.err(e))?;
         Ok(v.into_iter().map(|m| m.location.to_string()).collect())
     }
 
     /// Hashes stored individually under `kind/ab/cdef…`.
     fn hashes(&self, kind: &str) -> Result<HashSet<String>> {
-        Ok(self.list(kind)?.iter().filter_map(|n| n.strip_prefix(&format!("{kind}/"))).map(|h| h.replace('/', "")).collect())
+        Ok(self
+            .list(kind)?
+            .iter()
+            .filter_map(|n| n.strip_prefix(&format!("{kind}/")))
+            .map(|h| h.replace('/', ""))
+            .collect())
     }
 
     /// `(pack name, [(hash, offset, len)])` for every pack index.
     fn packs(&self) -> Result<Vec<(String, PackIndex)>> {
         let mut out = Vec::new();
-        for name in self.list("packs")?.into_iter().filter(|n| n.ends_with(".idx")) {
+        for name in self
+            .list("packs")?
+            .into_iter()
+            .filter(|n| n.ends_with(".idx"))
+        {
             let text = self.get(&name)?.unwrap_or_default();
-            let bad = || Error::BadIndex { url: self.url.clone(), name: name.clone() };
+            let bad = || Error::BadIndex {
+                url: self.url.clone(),
+                name: name.clone(),
+            };
             let mut entries = Vec::new();
             for line in String::from_utf8(text).map_err(|_| bad())?.lines() {
                 let mut it = line.split(' ');
-                let (Some(h), Some(o), Some(l)) = (it.next(), it.next(), it.next()) else { return Err(bad()) };
-                entries.push((h.to_string(), o.parse().map_err(|_| bad())?, l.parse().map_err(|_| bad())?));
+                let (Some(h), Some(o), Some(l)) = (it.next(), it.next(), it.next()) else {
+                    return Err(bad());
+                };
+                entries.push((
+                    h.to_string(),
+                    o.parse().map_err(|_| bad())?,
+                    l.parse().map_err(|_| bad())?,
+                ));
             }
             out.push((name.trim_end_matches(".idx").to_string(), entries));
         }
@@ -138,7 +176,12 @@ impl Remote {
     // ponytail: reads every pack index on each push/pull; cache them locally if packs pile up.
     pub fn push_blobs(&self, store: &Store) -> Result<Stats> {
         let mut st = Stats::default();
-        let remote_chunks: HashSet<String> = self.packs()?.into_iter().flat_map(|p| p.1).map(|e| e.0).collect();
+        let remote_chunks: HashSet<String> = self
+            .packs()?
+            .into_iter()
+            .flat_map(|p| p.1)
+            .map(|e| e.0)
+            .collect();
         let mut pack = Vec::new();
         let mut idx = String::new();
         for (hash, _, _) in store.list("chunks")? {
@@ -181,13 +224,19 @@ impl Remote {
     pub fn pull_blobs(&self, store: &Store) -> Result<Stats> {
         let mut st = Stats::default();
         for (name, entries) in self.packs()? {
-            let missing: Vec<_> = entries.into_iter().filter(|(h, _, _)| !store.has_raw("chunks", h)).collect();
+            let missing: Vec<_> = entries
+                .into_iter()
+                .filter(|(h, _, _)| !store.has_raw("chunks", h))
+                .collect();
             if missing.is_empty() {
                 continue;
             }
             let ranges: Vec<_> = missing.iter().map(|(_, o, l)| *o..o + l).collect();
             let path = OPath::from(format!("{name}.pack"));
-            let got = self.rt.block_on(self.store.get_ranges(&path, &ranges)).map_err(|e| self.err(e))?;
+            let got = self
+                .rt
+                .block_on(self.store.get_ranges(&path, &ranges))
+                .map_err(|e| self.err(e))?;
             for ((hash, _, _), bytes) in missing.iter().zip(got) {
                 st.add(bytes.len());
                 store.write_raw("chunks", hash, &bytes)?;
@@ -198,7 +247,11 @@ impl Remote {
                 if store.has_raw(kind, &hash) {
                     continue;
                 }
-                if let Some(bytes) = self.get(&format!("{kind}/{}/{}", &hash[..2.min(hash.len())], &hash[2.min(hash.len())..]))? {
+                if let Some(bytes) = self.get(&format!(
+                    "{kind}/{}/{}",
+                    &hash[..2.min(hash.len())],
+                    &hash[2.min(hash.len())..]
+                ))? {
                     st.add(bytes.len());
                     store.write_raw(kind, &hash, &bytes)?;
                 }
@@ -236,7 +289,11 @@ mod tests {
 
         let first = remote.push_blobs(&a).unwrap();
         assert!(first.bytes > 2 << 20, "{first:?}");
-        assert_eq!(remote.push_blobs(&a).unwrap(), Stats::default(), "second push uploads nothing");
+        assert_eq!(
+            remote.push_blobs(&a).unwrap(),
+            Stats::default(),
+            "second push uploads nothing"
+        );
         assert!(t.path().join("remote/objects").is_dir());
 
         let pulled = remote.pull_blobs(&b).unwrap();

@@ -26,28 +26,85 @@ struct Snap {
 
 /// Snapshots are zstd-compressed JSON kept in the `ops` row (local state; never synced).
 fn snapshot(repo: &Repo) -> Result<Vec<u8>> {
-    let mut st = repo.db.prepare("SELECT name, node_id FROM pins ORDER BY name")?;
-    let pins = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
-    let s = Snap { head: repo.head()?, fork_step: repo.meta("fork_step")?, nodes: node::all(&repo.db)?, pins };
+    let mut st = repo
+        .db
+        .prepare("SELECT name, node_id FROM pins ORDER BY name")?;
+    let pins = st
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let s = Snap {
+        head: repo.head()?,
+        fork_step: repo.meta("fork_step")?,
+        nodes: node::all(&repo.db)?,
+        pins,
+    };
     zstd::encode_all(&serde_json::to_vec(&s)?[..], 3).map_err(|e| msg(format!("op snapshot: {e}")))
 }
 
-fn restore(repo: &Repo, blob: &[u8]) -> Result<()> {
+fn decode(blob: &[u8]) -> Result<Snap> {
     let raw = zstd::decode_all(blob).map_err(|e| msg(format!("op snapshot: {e}")))?;
-    let s: Snap = serde_json::from_slice(&raw)?;
-    repo.db.execute("DELETE FROM nodes", [])?;
-    repo.db.execute("DELETE FROM pins", [])?;
-    for n in &s.nodes {
-        n.insert(&repo.db)?;
+    Ok(serde_json::from_slice(&raw)?)
+}
+
+fn restore(repo: &Repo, before: &[u8], after: &[u8]) -> Result<()> {
+    let (before, after) = (decode(before)?, decode(after)?);
+    let before_nodes: std::collections::HashMap<_, _> =
+        before.nodes.iter().map(|n| (&n.id, n)).collect();
+    let after_nodes: std::collections::HashMap<_, _> =
+        after.nodes.iter().map(|n| (&n.id, n)).collect();
+    for n in &after.nodes {
+        if !before_nodes.contains_key(&n.id) {
+            repo.db.execute("DELETE FROM nodes WHERE id=?1", [&n.id])?;
+        }
     }
-    for (name, id) in &s.pins {
-        repo.db.execute("INSERT INTO pins(name,node_id) VALUES(?1,?2)", [name, id])?;
+    for n in &before.nodes {
+        let after_node = after_nodes.get(&n.id).copied();
+        if after_node == Some(n) {
+            continue;
+        }
+        let restored = match (after_node, node::get(&repo.db, &n.id)?) {
+            (Some(a), Some(current)) => {
+                // Undo only this operation's edits, preserving asynchronous run updates.
+                let mut value = serde_json::to_value(current)?;
+                let old = serde_json::to_value(n)?;
+                let new = serde_json::to_value(a)?;
+                for (key, old_value) in old.as_object().unwrap() {
+                    if new.get(key) != Some(old_value) && value.get(key) == new.get(key) {
+                        value[key] = old_value.clone();
+                    }
+                }
+                serde_json::from_value(value)?
+            }
+            (Some(_), None) => continue,
+            (None, _) => n.clone(),
+        };
+        repo.db.execute("DELETE FROM nodes WHERE id=?1", [&n.id])?;
+        restored.insert(&repo.db)?;
     }
-    match &s.fork_step {
-        Some(v) => repo.set_meta("fork_step", v)?,
-        None => repo.del_meta("fork_step")?,
+    for (name, id) in &after.pins {
+        if !before.pins.contains(&(name.clone(), id.clone())) {
+            repo.db
+                .execute("DELETE FROM pins WHERE name=?1 AND node_id=?2", [name, id])?;
+        }
     }
-    repo.set_head(s.head.as_deref())
+    for (name, id) in &before.pins {
+        if !after.pins.contains(&(name.clone(), id.clone())) {
+            repo.db.execute(
+                "INSERT OR REPLACE INTO pins(name,node_id) VALUES(?1,?2)",
+                [name, id],
+            )?;
+        }
+    }
+    if before.fork_step != after.fork_step {
+        match &before.fork_step {
+            Some(v) => repo.set_meta("fork_step", v)?,
+            None => repo.del_meta("fork_step")?,
+        }
+    }
+    if before.head != after.head {
+        repo.set_head(before.head.as_deref())?;
+    }
+    Ok(())
 }
 
 /// Run `f` as one op: lock, transaction, before/after snapshots, op row.
@@ -68,7 +125,11 @@ pub fn record(
             "INSERT INTO ops(ts,command,before_snapshot,after_snapshot,wc_snapshot) VALUES(?1,?2,?3,?4,?5)",
             params![crate::now(), command, before, after, wc_snapshot],
         )?;
-        Ok(OpRecord { op_id: repo.db.last_insert_rowid(), command, node })
+        Ok(OpRecord {
+            op_id: repo.db.last_insert_rowid(),
+            command,
+            node,
+        })
     })();
     match res {
         Ok(r) => {
@@ -90,9 +151,17 @@ pub struct OpEntry {
 }
 
 pub fn log(repo: &Repo, limit: usize) -> Result<Vec<OpEntry>> {
-    let mut st = repo.db.prepare("SELECT op_id, ts, command FROM ops ORDER BY op_id DESC LIMIT ?1")?;
+    let mut st = repo
+        .db
+        .prepare("SELECT op_id, ts, command FROM ops ORDER BY op_id DESC LIMIT ?1")?;
     let v = st
-        .query_map([limit as i64], |r| Ok(OpEntry { op_id: r.get(0)?, ts: r.get(1)?, command: r.get(2)? }))?
+        .query_map([limit as i64], |r| {
+            Ok(OpEntry {
+                op_id: r.get(0)?,
+                ts: r.get(1)?,
+                command: r.get(2)?,
+            })
+        })?
         .collect::<rusqlite::Result<_>>()?;
     Ok(v)
 }
@@ -103,14 +172,18 @@ pub fn undo(repo: &mut Repo, n: usize) -> Result<OpRecord> {
     if n == 0 {
         return Err(msg("undo: n must be at least 1"));
     }
-    let rows: Vec<(i64, Vec<u8>, Option<String>)> = {
-        let mut st = repo.db.prepare("SELECT op_id, before_snapshot, wc_snapshot FROM ops ORDER BY op_id DESC LIMIT ?1")?;
-        st.query_map([n as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<_>>()?
+    type UndoRow = (i64, Vec<u8>, Option<String>, Vec<u8>);
+    let rows: Vec<UndoRow> = {
+        let mut st = repo.db.prepare("SELECT op_id, before_snapshot, wc_snapshot, after_snapshot FROM ops ORDER BY op_id DESC LIMIT ?1")?;
+        st.query_map([n as i64], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?
     };
     if rows.len() < n {
         return Err(msg(format!("undo: only {} op(s) in the log", rows.len())));
     }
-    let (op_id, before, _) = rows.last().unwrap().clone();
+    let op_id = rows.last().unwrap().0;
     // Working copy target: the oldest undone op that recorded one.
     let wc_target = rows.iter().rev().find_map(|r| r.2.clone());
     // Save the current working copy first so undo itself is undoable.
@@ -118,10 +191,15 @@ pub fn undo(repo: &mut Repo, n: usize) -> Result<OpRecord> {
         Some(_) => Some(crate::wc::snapshot_manifest(repo)?),
         None => None,
     };
-    let pruned_before: Vec<String> =
-        node::all(&repo.db)?.into_iter().filter(|n| n.status == node::Status::Pruned).map(|n| n.id).collect();
+    let pruned_before: Vec<String> = node::all(&repo.db)?
+        .into_iter()
+        .filter(|n| n.status == node::Status::Pruned)
+        .map(|n| n.id)
+        .collect();
     let rec = record(repo, wc_now, |repo| {
-        restore(repo, &before)?;
+        for (_, before, _, after) in &rows {
+            restore(repo, before, after)?;
+        }
         Ok(repo.head()?.unwrap_or_default())
     })?;
     if let Some(m) = wc_target {
@@ -132,9 +210,19 @@ pub fn undo(repo: &mut Repo, n: usize) -> Result<OpRecord> {
         if let Some(n) = node::get(&repo.db, &id)?.filter(|n| n.status != node::Status::Pruned) {
             let gone = crate::weights::missing_weights(repo, &n)?;
             if !gone.is_empty() {
-                eprintln!("warning: {id}: weights already removed by gc: {}", gone.join(", "));
+                eprintln!(
+                    "warning: {id}: weights already removed by gc: {}",
+                    gone.join(", ")
+                );
             }
         }
     }
-    Ok(OpRecord { node: if rec.node.is_empty() { format!("(op {op_id})") } else { rec.node }, ..rec })
+    Ok(OpRecord {
+        node: if rec.node.is_empty() {
+            format!("(op {op_id})")
+        } else {
+            rec.node
+        },
+        ..rec
+    })
 }

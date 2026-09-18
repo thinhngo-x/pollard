@@ -14,11 +14,16 @@ pub fn ingest_line(db: &Connection, node: &str, line: &str) -> Result<usize> {
     if line.is_empty() {
         return Ok(0);
     }
-    let Ok(serde_json::Value::Object(m)) = serde_json::from_str::<serde_json::Value>(line) else { return Ok(0) };
-    let Some(step) = m.get("step").and_then(|s| s.as_i64()) else { return Ok(0) };
+    let Ok(serde_json::Value::Object(m)) = serde_json::from_str::<serde_json::Value>(line) else {
+        return Ok(0);
+    };
+    let Some(step) = m.get("step").and_then(|s| s.as_i64()) else {
+        return Ok(0);
+    };
     let ts = crate::now();
     let mut n = 0;
-    let mut st = db.prepare_cached("INSERT INTO metrics(node_id,key,step,value,ts) VALUES(?1,?2,?3,?4,?5)")?;
+    let mut st =
+        db.prepare_cached("INSERT INTO metrics(node_id,key,step,value,ts) VALUES(?1,?2,?3,?4,?5)")?;
     for (k, v) in &m {
         if k == "step" {
             continue;
@@ -36,7 +41,9 @@ fn own(db: &Connection, node: &str, key: &str, max_step: Option<i64>) -> Result<
         "SELECT step, value FROM metrics WHERE node_id=?1 AND key=?2 AND step<=?3 ORDER BY step, rowid",
     )?;
     let v = st
-        .query_map(params![node, key, max_step.unwrap_or(i64::MAX)], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .query_map(params![node, key, max_step.unwrap_or(i64::MAX)], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?
         .collect::<rusqlite::Result<_>>()?;
     Ok(v)
 }
@@ -104,7 +111,10 @@ pub fn fork_target(db: &Connection, target: Node, step: i64) -> Result<(Node, Op
         cur = node::get(db, &p)?.ok_or_else(|| msg(format!("unknown node: {p}")))?;
     }
     let notice = (cur.id != orig).then(|| {
-        format!("note: {orig} was forked after step {step}; forking its ancestor {} at {step} instead", cur.id)
+        format!(
+            "note: {orig} was forked after step {step}; forking its ancestor {} at {step} instead",
+            cur.id
+        )
     });
     Ok((cur, notice))
 }

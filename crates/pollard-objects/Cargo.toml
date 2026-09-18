@@ -1,8 +1,11 @@
 [package]
 name = "pollard-objects"
+description = "Content-addressed object store and CDC chunking for pollard."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
 
 [dependencies]
 blake3 = "1.8.7"

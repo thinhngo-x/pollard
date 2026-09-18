@@ -41,19 +41,28 @@ impl Manifest {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = String::new();
         for e in &self.entries {
-            out.push_str(&format!("{}\t{}\t{}\t{:o}\n", e.path, e.size, e.hash, e.mode));
+            out.push_str(&format!(
+                "{}\t{}\t{}\t{:o}\n",
+                e.path, e.size, e.hash, e.mode
+            ));
         }
         out.into_bytes()
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self> {
-        let text = std::str::from_utf8(bytes)
-            .map_err(|_| Error::BadManifest { line: 0, reason: "not UTF-8".into() })?;
+        let text = std::str::from_utf8(bytes).map_err(|_| Error::BadManifest {
+            line: 0,
+            reason: "not UTF-8".into(),
+        })?;
         let mut entries = Vec::new();
         for (i, line) in text.lines().enumerate() {
-            let bad = |reason: &str| Error::BadManifest { line: i + 1, reason: reason.into() };
+            let bad = |reason: &str| Error::BadManifest {
+                line: i + 1,
+                reason: reason.into(),
+            };
             let mut it = line.rsplitn(4, '\t');
-            let (Some(mode), Some(hash), Some(size), Some(path)) = (it.next(), it.next(), it.next(), it.next())
+            let (Some(mode), Some(hash), Some(size), Some(path)) =
+                (it.next(), it.next(), it.next(), it.next())
             else {
                 return Err(bad("expected 4 tab-separated fields"));
             };
@@ -102,15 +111,32 @@ pub struct Change {
 pub fn diff(old: &Manifest, new: &Manifest) -> Vec<Change> {
     let (mut a, mut b) = (old.entries.iter().peekable(), new.entries.iter().peekable());
     let mut out = Vec::new();
-    let mut push = |path: &str, kind| out.push(Change { path: path.to_string(), kind });
+    let mut push = |path: &str, kind| {
+        out.push(Change {
+            path: path.to_string(),
+            kind,
+        })
+    };
     loop {
         match (a.peek(), b.peek()) {
             (None, None) => break,
-            (Some(x), None) => { push(&x.path, ChangeKind::Removed); a.next(); }
-            (None, Some(y)) => { push(&y.path, ChangeKind::Added); b.next(); }
+            (Some(x), None) => {
+                push(&x.path, ChangeKind::Removed);
+                a.next();
+            }
+            (None, Some(y)) => {
+                push(&y.path, ChangeKind::Added);
+                b.next();
+            }
             (Some(x), Some(y)) => match x.path.cmp(&y.path) {
-                Ordering::Less => { push(&x.path, ChangeKind::Removed); a.next(); }
-                Ordering::Greater => { push(&y.path, ChangeKind::Added); b.next(); }
+                Ordering::Less => {
+                    push(&x.path, ChangeKind::Removed);
+                    a.next();
+                }
+                Ordering::Greater => {
+                    push(&y.path, ChangeKind::Added);
+                    b.next();
+                }
                 Ordering::Equal => {
                     if x.hash != y.hash || x.mode != y.mode {
                         push(&x.path, ChangeKind::Modified);
@@ -141,6 +167,8 @@ pub struct WalkOptions {
     /// they are the only files walked (docs manifests).
     pub offtree: Vec<String>,
     pub offtree_only: bool,
+    /// Captured config belongs to code even when an off-tree pattern matches.
+    pub config_file: Option<String>,
 }
 
 impl WalkOptions {
@@ -191,7 +219,12 @@ pub(crate) fn build(
             continue;
         }
         let (hash, size) = content(&abs, &md)?;
-        entries.push(Entry { path: rel, size, hash, mode: mode_of(&md) });
+        entries.push(Entry {
+            path: rel,
+            size,
+            hash,
+            mode: mode_of(&md),
+        });
     }
     snap.manifest = Manifest::new(entries);
     Ok(snap)
@@ -208,7 +241,10 @@ fn mode_of(md: &Metadata) -> u32 {
 }
 
 /// Regular files and symlinks under `root` that pass the walk rules: `(abs, rel, metadata)`.
-pub(crate) fn list_files(root: &Path, opts: &WalkOptions) -> Result<Vec<(PathBuf, String, Metadata)>> {
+pub(crate) fn list_files(
+    root: &Path,
+    opts: &WalkOptions,
+) -> Result<Vec<(PathBuf, String, Metadata)>> {
     let mut ob = OverrideBuilder::new(root);
     ob.add("!/.pollard/")?.add("!/.git/")?;
     for g in &opts.globs {
@@ -244,8 +280,13 @@ pub(crate) fn list_files(root: &Path, opts: &WalkOptions) -> Result<Vec<(PathBuf
             continue;
         }
         let rel = abs.strip_prefix(root).unwrap_or(abs);
-        let rel_str = rel.to_str().filter(|s| !s.contains('\n')).ok_or_else(|| Error::BadPath(abs.into()))?;
-        if offtree.matched_path_or_any_parents(rel, false).is_ignore() != opts.offtree_only {
+        let rel_str = rel
+            .to_str()
+            .filter(|s| !s.contains('\n'))
+            .ok_or_else(|| Error::BadPath(abs.into()))?;
+        let is_offtree = opts.config_file.as_deref() != Some(rel_str)
+            && offtree.matched_path_or_any_parents(rel, false).is_ignore();
+        if is_offtree != opts.offtree_only {
             continue;
         }
         out.push((abs.to_path_buf(), rel_str.to_string(), md));
@@ -271,8 +312,18 @@ mod tests {
     #[test]
     fn roundtrip_and_hash_stable() {
         let m = Manifest::new(vec![
-            Entry { path: "b\tweird".into(), size: 3, hash: hash_bytes(b"abc"), mode: MODE_EXEC },
-            Entry { path: "a/x.py".into(), size: 0, hash: hash_bytes(b""), mode: MODE_FILE },
+            Entry {
+                path: "b\tweird".into(),
+                size: 3,
+                hash: hash_bytes(b"abc"),
+                mode: MODE_EXEC,
+            },
+            Entry {
+                path: "a/x.py".into(),
+                size: 0,
+                hash: hash_bytes(b""),
+                mode: MODE_FILE,
+            },
         ]);
         assert_eq!(m.entries[0].path, "a/x.py");
         let back = Manifest::parse(&m.to_bytes()).unwrap();
@@ -284,16 +335,30 @@ mod tests {
 
     #[test]
     fn diff_kinds() {
-        let e = |p: &str, h: &str| Entry { path: p.into(), size: 1, hash: h.into(), mode: MODE_FILE };
+        let e = |p: &str, h: &str| Entry {
+            path: p.into(),
+            size: 1,
+            hash: h.into(),
+            mode: MODE_FILE,
+        };
         let a = Manifest::new(vec![e("a", "1"), e("b", "1"), e("c", "1")]);
         let b = Manifest::new(vec![e("b", "2"), e("c", "1"), e("d", "1")]);
         let d = diff(&a, &b);
         assert_eq!(
             d,
             vec![
-                Change { path: "a".into(), kind: ChangeKind::Removed },
-                Change { path: "b".into(), kind: ChangeKind::Modified },
-                Change { path: "d".into(), kind: ChangeKind::Added },
+                Change {
+                    path: "a".into(),
+                    kind: ChangeKind::Removed
+                },
+                Change {
+                    path: "b".into(),
+                    kind: ChangeKind::Modified
+                },
+                Change {
+                    path: "d".into(),
+                    kind: ChangeKind::Added
+                },
             ]
         );
     }
@@ -318,24 +383,56 @@ mod tests {
         let mut opts = WalkOptions::code(&["*.md".into(), "notes/".into(), "outputs/".into()]);
         opts.max_file_size = Some(50);
         let s = scan_dir(r, &opts).unwrap();
-        assert_eq!(paths(&s), vec![".gitignore", ".pollardignore", ".python-version", "src/deep/mod.py", "train.py"]);
+        assert_eq!(
+            paths(&s),
+            vec![
+                ".gitignore",
+                ".pollardignore",
+                ".python-version",
+                "src/deep/mod.py",
+                "train.py"
+            ]
+        );
         assert_eq!(s.oversized, vec![("big.bin".to_string(), 100)]);
 
         // docs: whitelist the off-tree globs
-        let docs = WalkOptions { globs: vec!["*.md".into(), "notes/".into()], ignore_files: true, ..Default::default() };
-        assert_eq!(paths(&scan_dir(r, &docs).unwrap()), vec!["REPORT.md", "notes/idea.txt"]);
+        let docs = WalkOptions {
+            globs: vec!["*.md".into(), "notes/".into()],
+            ignore_files: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            paths(&scan_dir(r, &docs).unwrap()),
+            vec!["REPORT.md", "notes/idea.txt"]
+        );
 
         // offtree with gitignore semantics: `!README.md` re-includes it in code
         write(r, "README.md", "readme");
         write(r, "src/deep/NOTES.md", "n");
         let off = vec!["*.md".to_string(), "notes/".into(), "!README.md".into()];
-        let code = WalkOptions { offtree: off.clone(), ..WalkOptions::code(&["outputs/".into()]) };
+        let code = WalkOptions {
+            offtree: off.clone(),
+            ..WalkOptions::code(&["outputs/".into()])
+        };
         let got = scan_dir(r, &code).unwrap();
         assert!(got.manifest.get("README.md").is_some());
-        assert!(got.manifest.get("REPORT.md").is_none() && got.manifest.get("src/deep/NOTES.md").is_none());
-        assert!(got.manifest.get("notes/idea.txt").is_none() && got.manifest.get("train.py").is_some());
-        let docs = WalkOptions { offtree: off, offtree_only: true, ignore_files: true, ..Default::default() };
-        assert_eq!(paths(&scan_dir(r, &docs).unwrap()), vec!["REPORT.md", "notes/idea.txt", "src/deep/NOTES.md"]);
+        assert!(
+            got.manifest.get("REPORT.md").is_none()
+                && got.manifest.get("src/deep/NOTES.md").is_none()
+        );
+        assert!(
+            got.manifest.get("notes/idea.txt").is_none() && got.manifest.get("train.py").is_some()
+        );
+        let docs = WalkOptions {
+            offtree: off,
+            offtree_only: true,
+            ignore_files: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            paths(&scan_dir(r, &docs).unwrap()),
+            vec!["REPORT.md", "notes/idea.txt", "src/deep/NOTES.md"]
+        );
     }
 
     #[test]
@@ -349,6 +446,9 @@ mod tests {
         let m = &s.manifest;
         assert_eq!(m.get("run.sh").unwrap().mode, MODE_EXEC);
         let l = m.get("link").unwrap();
-        assert_eq!((l.mode, l.hash.as_str(), l.size), (MODE_LINK, hash_bytes(b"run.sh").as_str(), 6));
+        assert_eq!(
+            (l.mode, l.hash.as_str(), l.size),
+            (MODE_LINK, hash_bytes(b"run.sh").as_str(), 6)
+        );
     }
 }

@@ -45,20 +45,40 @@ pub fn config_delta(old: &Value, new: &Value) -> Vec<ConfigChange> {
 }
 
 fn walk(prefix: &str, a: &Value, b: &Value, out: &mut Vec<ConfigChange>) {
-    let join = |k: &str| if prefix.is_empty() { k.to_string() } else { format!("{prefix}.{k}") };
+    let join = |k: &str| {
+        if prefix.is_empty() {
+            k.to_string()
+        } else {
+            format!("{prefix}.{k}")
+        }
+    };
     match (a, b) {
         (Value::Object(x), Value::Object(y)) => {
             let keys: std::collections::BTreeSet<&String> = x.keys().chain(y.keys()).collect();
             for k in keys {
-                walk(&join(k), x.get(k).unwrap_or(&Value::Null), y.get(k).unwrap_or(&Value::Null), out);
+                walk(
+                    &join(k),
+                    x.get(k).unwrap_or(&Value::Null),
+                    y.get(k).unwrap_or(&Value::Null),
+                    out,
+                );
             }
         }
         (Value::Array(x), Value::Array(y)) => {
             for i in 0..x.len().max(y.len()) {
-                walk(&join(&i.to_string()), x.get(i).unwrap_or(&Value::Null), y.get(i).unwrap_or(&Value::Null), out);
+                walk(
+                    &join(&i.to_string()),
+                    x.get(i).unwrap_or(&Value::Null),
+                    y.get(i).unwrap_or(&Value::Null),
+                    out,
+                );
             }
         }
-        _ if a != b => out.push(ConfigChange { path: prefix.to_string(), old: a.clone(), new: b.clone() }),
+        _ if a != b => out.push(ConfigChange {
+            path: prefix.to_string(),
+            old: a.clone(),
+            new: b.clone(),
+        }),
         _ => {}
     }
 }
@@ -90,7 +110,11 @@ pub fn summarize_changes(ch: &[Change]) -> String {
         ChangeKind::Modified => "~",
     };
     if ch.len() <= 2 {
-        return ch.iter().map(|c| format!("{}{}", sign(c.kind), c.path)).collect::<Vec<_>>().join(" ");
+        return ch
+            .iter()
+            .map(|c| format!("{}{}", sign(c.kind), c.path))
+            .collect::<Vec<_>>()
+            .join(" ");
     }
     [ChangeKind::Added, ChangeKind::Removed, ChangeKind::Modified]
         .into_iter()
@@ -109,7 +133,11 @@ pub fn summarize_env(ch: &[EnvChange]) -> String {
         (Some(o), None) => format!("−{} {o}", c.name),
         (None, None) => c.name.clone(),
     };
-    if ch.len() <= 2 { ch.iter().map(one).collect::<Vec<_>>().join(", ") } else { format!("{} packages", ch.len()) }
+    if ch.len() <= 2 {
+        ch.iter().map(one).collect::<Vec<_>>().join(", ")
+    } else {
+        format!("{} packages", ch.len())
+    }
 }
 
 pub fn summarize_data(d: &DataDelta) -> String {
@@ -135,13 +163,22 @@ pub fn summarize_data(d: &DataDelta) -> String {
 
 /// Code changes minus the captured config file (it shows as config rows instead).
 pub fn visible_code(d: &Deltas, config_file: Option<&str>) -> Vec<Change> {
-    d.code.iter().filter(|c| Some(c.path.as_str()) != config_file).cloned().collect()
+    d.code
+        .iter()
+        .filter(|c| Some(c.path.as_str()) != config_file)
+        .cloned()
+        .collect()
 }
 
 /// Auto note (§3): the config delta, else the code delta, else "rerun".
 pub fn auto_note(d: &Deltas, config_file: Option<&str>) -> String {
     if !d.config.is_empty() {
-        return d.config.iter().map(|c| format!("{} {}", c.path, fmt_change(c))).collect::<Vec<_>>().join(", ");
+        return d
+            .config
+            .iter()
+            .map(|c| format!("{} {}", c.path, fmt_change(c)))
+            .collect::<Vec<_>>()
+            .join(", ");
     }
     let code = visible_code(d, config_file);
     if !code.is_empty() {
@@ -173,7 +210,9 @@ pub fn load(repo: &Repo, node: &str) -> Result<Deltas> {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .optional()?;
-    let Some((c, k, d, e)) = row else { return Ok(Deltas::default()) };
+    let Some((c, k, d, e)) = row else {
+        return Ok(Deltas::default());
+    };
     Ok(Deltas {
         config: serde_json::from_str(&c)?,
         code: serde_json::from_str(&k)?,
@@ -189,18 +228,42 @@ mod tests {
 
     #[test]
     fn config_paths() {
-        let a = json!({"lr": 3e-4, "model": {"depth": 12, "heads": 8}, "layers": [1, 2], "gone": 1});
+        let a =
+            json!({"lr": 3e-4, "model": {"depth": 12, "heads": 8}, "layers": [1, 2], "gone": 1});
         let b = json!({"lr": 1e-4, "model": {"depth": 24, "heads": 8}, "layers": [1, 3, 4], "new": "x"});
         let d = config_delta(&a, &b);
-        let got: Vec<String> = d.iter().map(|c| format!("{} {}", c.path, fmt_change(c))).collect();
-        assert_eq!(got, ["gone 1→∅", "layers.1 2→3", "layers.2 ∅→4", "lr 3e-4→1e-4", "model.depth 12→24", "new ∅→x"]);
+        let got: Vec<String> = d
+            .iter()
+            .map(|c| format!("{} {}", c.path, fmt_change(c)))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                "gone 1→∅",
+                "layers.1 2→3",
+                "layers.2 ∅→4",
+                "lr 3e-4→1e-4",
+                "model.depth 12→24",
+                "new ∅→x"
+            ]
+        );
     }
 
     #[test]
     fn summaries() {
-        let c = |p: &str, k| Change { path: p.into(), kind: k };
-        assert_eq!(summarize_changes(&[c("attn.py", ChangeKind::Added)]), "+attn.py");
-        let three = [c("a", ChangeKind::Removed), c("b", ChangeKind::Removed), c("d", ChangeKind::Added)];
+        let c = |p: &str, k| Change {
+            path: p.into(),
+            kind: k,
+        };
+        assert_eq!(
+            summarize_changes(&[c("attn.py", ChangeKind::Added)]),
+            "+attn.py"
+        );
+        let three = [
+            c("a", ChangeKind::Removed),
+            c("b", ChangeKind::Removed),
+            c("d", ChangeKind::Added),
+        ];
         assert_eq!(summarize_changes(&three), "+1 file −2 files");
         assert_eq!(fmt_f64(0.1), "0.1");
         assert_eq!(fmt_f64(12.0), "12");
