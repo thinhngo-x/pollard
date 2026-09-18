@@ -25,7 +25,7 @@ jobs:
 
       # M5 (uv integration) and the journey tests shell out to a real `uv`, not just the
       # `python` job's build - without this, `cargo test` fails with "uv: command not found".
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.10"
 
@@ -43,6 +43,26 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
+  msrv:
+    # Builds on the rust-version declared in Cargo.toml; the rust job uses latest stable,
+    # which can't catch a dependency that needs a newer compiler than we promise.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read rust-version
+        id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo build (MSRV)
+        run: cargo build --workspace --locked
+
   python:
     runs-on: ubuntu-latest
     steps:
@@ -54,7 +74,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.10"
 

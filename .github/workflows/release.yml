@@ -39,7 +39,7 @@ jobs:
           cd target/x86_64-unknown-linux-gnu/release
           tar czf pollard-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz pollard po
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-binaries
           path: target/x86_64-unknown-linux-gnu/release/pollard-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
@@ -61,7 +61,7 @@ jobs:
           manylinux: auto
           args: --release --out dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: python-wheel
           path: python/dist/*
@@ -71,7 +71,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: python-wheel
           path: dist
@@ -86,11 +86,11 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') # skip on a manual workflow_dispatch test run
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           draft: true # publish manually once someone has reviewed the notes
           files: |

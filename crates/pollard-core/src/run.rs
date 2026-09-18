@@ -348,7 +348,7 @@ pub fn execute(repo: &Repo, l: &Launch) -> Result<i32> {
         if let Some(st) = child.try_wait().at(&l.argv[0])? {
             break st;
         }
-        if tick % 10 == 0 {
+        if tick.is_multiple_of(10) {
             if !config_done && config_path.is_file() {
                 config_done = capture_sdk_config(repo, &l.node, &config_path)?;
             }
@@ -447,12 +447,11 @@ fn capture_hydra_config(repo: &Repo, node: &str) -> Result<()> {
             .flatten()
         {
             let p = ent.path();
-            if p.ends_with(".hydra/config.yaml") {
-                if let Ok(t) = p.metadata().and_then(|m| m.modified()) {
-                    if best.as_ref().is_none_or(|b| t > b.0) {
-                        best = Some((t, p.to_path_buf()));
-                    }
-                }
+            if p.ends_with(".hydra/config.yaml")
+                && let Ok(t) = p.metadata().and_then(|m| m.modified())
+                && best.as_ref().is_none_or(|b| t > b.0)
+            {
+                best = Some((t, p.to_path_buf()));
             }
         }
     }

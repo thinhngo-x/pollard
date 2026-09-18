@@ -12,9 +12,9 @@ use crate::{Entry, Error, IoCtx, Manifest, Result, Snapshot, WalkOptions, hash_b
 
 /// Blobs under this size are stored whole in `objects/`; larger ones are CDC-chunked.
 pub const SMALL_LIMIT: u64 = 1 << 20;
-const CHUNK_MIN: u32 = 8 * 1024;
-const CHUNK_AVG: u32 = 64 * 1024;
-const CHUNK_MAX: u32 = 128 * 1024;
+const CHUNK_MIN: usize = 8 * 1024;
+const CHUNK_AVG: usize = 64 * 1024;
+const CHUNK_MAX: usize = 128 * 1024;
 const ZSTD_LEVEL: i32 = 3;
 
 /// On-disk store rooted at `.pollard/`:

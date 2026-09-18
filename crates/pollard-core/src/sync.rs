@@ -178,14 +178,15 @@ pub fn pull(repo: &mut Repo) -> Result<(OpRecord, SyncStats)> {
     let remote = open(repo)?;
     let (_, lines) = remote_nodes(&remote)?;
     for (id, _, l) in &lines {
-        if let Some(local) = node::get(&repo.db, id)? {
-            if local.recipe_hash != l.node.recipe_hash && local.created_at != l.node.created_at {
-                return Err(msg(format!(
-                    "pull: node id {id} exists here with a different recipe (local {}, remote {}); refusing",
-                    &local.recipe_hash[..12.min(local.recipe_hash.len())],
-                    &l.node.recipe_hash[..12.min(l.node.recipe_hash.len())]
-                )));
-            }
+        if let Some(local) = node::get(&repo.db, id)?
+            && local.recipe_hash != l.node.recipe_hash
+            && local.created_at != l.node.created_at
+        {
+            return Err(msg(format!(
+                "pull: node id {id} exists here with a different recipe (local {}, remote {}); refusing",
+                &local.recipe_hash[..12.min(local.recipe_hash.len())],
+                &l.node.recipe_hash[..12.min(l.node.recipe_hash.len())]
+            )));
         }
     }
     let mut stats = SyncStats::default();

@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 pub struct Lock(File);
 impl Drop for Lock {
     fn drop(&mut self) {
-        let _ = fs4::fs_std::FileExt::unlock(&self.0);
+        let _ = self.0.unlock();
     }
 }
 
@@ -120,7 +120,7 @@ impl Repo {
             .write(true)
             .open(&p)
             .at(&p)?;
-        fs4::fs_std::FileExt::lock_exclusive(&f).at(&p)?;
+        f.lock().at(&p)?;
         Ok(Lock(f))
     }
 

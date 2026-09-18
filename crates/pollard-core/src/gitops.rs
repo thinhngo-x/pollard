@@ -182,10 +182,10 @@ fn message(repo: &Repo, n: &Node) -> Result<String> {
         Some(k) => Some(k.clone()),
         None => metrics::keys(&repo.db, &n.id)?.into_iter().next(),
     };
-    if let Some(k) = key {
-        if let Some((step, v)) = metrics::series(&repo.db, &n.id, &k)?.last() {
-            body.push(format!("{k} = {v} at step {step}"));
-        }
+    if let Some(k) = key
+        && let Some((step, v)) = metrics::series(&repo.db, &n.id, &k)?.last()
+    {
+        body.push(format!("{k} = {v} at step {step}"));
     }
     Ok(if body.is_empty() {
         first
