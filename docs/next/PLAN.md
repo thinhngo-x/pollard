@@ -33,9 +33,9 @@ Priority order: (P0) data-loss/data-hiding → (P1) daily-workflow friction → 
 | P0 | **Repo and remote migration** from alpha.1 ("format 2") | Needed by #19 and #17; it has to be safe and one command, or nobody upgrades. |
 | P0 | **Hydra capture records the previous run's config** (TECH §0: newest `.hydra/config.yaml` with no mtime bound) | Silently wrong recipe on any Hydra run that crashes early. S. |
 | P0 | **`Status::parse` maps unknown strings to `Pruned`**; duplicate check must use `pruned_at IS NULL` | Silent data hiding once `pruned` stops being a status. Fixed inside N1 and N2, not separate work. |
-| P1 | **#13**: a run from a failed `@` becomes a sibling of the failed node | Owner-confirmed bug. It corrupts the tree's shape on every failed retry. |
+| P1 | **#13**: a run from a failed or killed `@` becomes a sibling of it; resuming (`fork --step`) makes a child | Owner-confirmed bug. It corrupts the tree's shape on every failed retry. |
 | P1 | **#17**: `pin` takes an optional name, pinned nodes are highlighted, `tree --pinned` | Owner-chosen way to highlight runs. It shares the `pins` reshape with the migration. |
-| P1 | **#11**: stop collapsing failed subtrees; dim them instead | Owner remark: the tree looks cut off at arbitrary depths. Falls out of the #19 tree change. |
+| P1 | **#11**: a node with children never collapses in `tree`, except a pruned node | Owner remark: the tree looks cut off at arbitrary depths. Falls out of the #19 tree change. |
 | P1 | **#12**: `diff A B` on siblings shows a direct A-vs-B diff | Daily friction and a small change. `siblings` still gives the parent-relative view. |
 | P1 | **Remote data roots hashed from the listing** (`(key, size, etag)` per SPEC §3), not from the URL alone | Silent recipe error: a changed S3 dataset gives the same `data` hash, so the duplicate check and deltas are wrong. S in size, but its test needs S3 CI, so it lands in phase 4 and is the last item cut. |
 | P1 | **S3 tested in CI** (MinIO) | The remote format changes; S3 is the main shared remote and was never tested. |
@@ -130,9 +130,11 @@ Acceptance
 
 Acceptance
 - [ ] #13: root → `buggy` (fails) → edit config → `po run` gives a new node whose parent is root, with a one-line notice naming `buggy`. The last output line is still the node id.
-- [ ] #13: after `po fork buggy --step N`, the next `run` is a **child** of `buggy` with `fork_step=N` (resuming from a failed run's checkpoint stays possible).
-- [ ] #13: `po run --parent buggy` makes a child of `buggy`, because an explicit parent wins. A `killed` `@` keeps today's behaviour (a child), per D6.
-- [ ] #11: a failed node with children is shown with its children, never as `… N collapsed`. Failed rows are dimmed on a TTY and marked `failed` in plain text.
+- [ ] #13: the same with a `killed` `@` (Ctrl-C during the run): the next plain `po run` is a sibling of the killed node.
+- [ ] #13: resuming is the exception. After `po fork buggy --step N` (failed) or `po fork blue-elk-5 --step N` (killed, Journey C), the next `run` is a **child** with `fork_step=N`.
+- [ ] #13: `po run --parent buggy` makes a child of `buggy`, because an explicit parent wins.
+- [ ] #11: a node with children (done, failed, killed or running) is always shown with its children, never as `… N collapsed`.
+- [ ] #11: a pruned node collapses: hidden unless `--all`, as today. Guard: if a pruned node still has non-pruned descendants (node-only prune, #19), it is shown as a dimmed placeholder with those descendants instead, so live runs are never hidden.
 - [ ] #17: `po pin X` with no name succeeds. `po pin X paper` adds the name, and `paper` resolves as a node ref. `po unpin X` and `po unpin paper` both work. Both are undoable.
 - [ ] #17: pinned nodes carry `◆` in `tree` when not on a TTY or when `NO_COLOR` is set, and are highlighted on a TTY. `★` stays reserved for `--metric`.
 - [ ] #17: `po tree --pinned` on a 1,000-node repo with 3 pins prints exactly the 3 pinned nodes plus their root paths, in under 200 ms.
@@ -234,7 +236,7 @@ Merged with TECH §5 Q1–Q9 (TECH id in brackets). Every item has a default, so
 | D3 | Migration: automatic on first open (with a backup), and no `undo` across it (op-log barrier)? [Q2] | Yes to both. The upgrade notes say "undo before upgrading". |
 | D4 | Fallback status for a pruned node whose pre-prune outcome isn't in the op log [Q3] | `done` if `finished_at` is set, else `killed`. The migration notice lists those ids. |
 | D5 | `diff A B` on siblings: direct only, or keep a flag for the parent-relative view? | Direct only. `siblings` is the parent-relative view. |
-| D6 | #13: does a `killed` `@` also make the next run a sibling? | No, only `failed`. A killed run often has checkpoints worth building on. Explicit `--parent` and a pending `fork --step` always win. |
+| D6 | #13: does a `killed` `@` also make the next run a sibling? | **Decided (owner): yes**, failed and killed alike. Resuming via `fork --step` makes a child; explicit `--parent` also wins. |
 | D7 | Do unnamed pins sync on `push`? | Yes, same as named pins. No `--local` until someone asks. |
 | D8 | #15 `run --name`: defer, and what happens on a cross-clone name collision if it returns? [Q6] | Defer; pins cover naming for now. Settle the collision rule (refuse the whole pull, or scope it as `name@clone`) before bringing it back. |
 | D9 | macOS arm64 and musllinux in this release? | Yes, as best-effort platforms (CI-tested only). Cut them rather than delay the release. |
