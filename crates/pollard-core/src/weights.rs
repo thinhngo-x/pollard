@@ -141,7 +141,7 @@ pub fn step_of(path: &str) -> Option<i64> {
     let name = path.rsplit('/').next()?;
     name.split(|c: char| !c.is_ascii_digit())
         .filter(|d| !d.is_empty())
-        .last()?
+        .next_back()?
         .parse()
         .ok()
 }

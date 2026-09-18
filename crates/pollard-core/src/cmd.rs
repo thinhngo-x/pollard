@@ -182,8 +182,7 @@ pub fn apply(repo: &mut Repo, node: &str) -> Result<Applied> {
             conflicts.push(c.path);
             continue;
         }
-        if (base == theirs || ours == theirs) && ours.is_some() {
-            let bytes = ours.as_ref().unwrap();
+        if let Some(bytes) = ours.as_ref().filter(|_| base == theirs || ours == theirs) {
             let (hash, size) = repo.objects.put_bytes(bytes)?;
             let entry = pollard_objects::Entry {
                 path: c.path.clone(),
