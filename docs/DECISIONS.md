@@ -74,3 +74,6 @@ Evidence was gathered on 2026-09-18 with `cargo info` / `cargo search`, `curl ht
 - Tag mode: `data = [{ tag = "..." }]`. The hash is blake3 of the tag and no files are read. The user must bump the tag when the data changes.
 - Stat mode: `data = [{ path = "...", mode = "stat" }]`. The manifest uses `(path, size, mtime)`. It misses same-size edits with a preserved mtime.
 - The default stays content hashing for local roots and etag listing for remote roots. The plain-string form stays valid, and there is no node schema change.
+| L-11 | Op snapshots are zstd-compressed JSON in the `ops` row (not in `objects/`), so they stay local and are never pushed. | 1,000-node snapshots ×2 per op made `db.sqlite` large and ops slow; objects would leak into `push`. |
+| L-12 | `apply` merges per line when base/ours/theirs have equal line counts (in-place edits), else diff3 (`diffy`). | diff3 treats edits on adjacent lines (`lr`, `depth`) as one conflicting hunk; Journey B needs them to merge. |
+| L-13 | `run` checks for child exit every 20 ms and tails metrics every 200 ms. | Short runs return quickly; D-9 cadence unchanged. |
