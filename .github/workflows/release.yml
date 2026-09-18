@@ -39,7 +39,7 @@ jobs:
           cd target/x86_64-unknown-linux-gnu/release
           tar czf pollard-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz pollard po
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-binaries
           path: target/x86_64-unknown-linux-gnu/release/pollard-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
@@ -61,7 +61,7 @@ jobs:
           manylinux: auto
           args: --release --out dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: python-wheel
           path: python/dist/*
