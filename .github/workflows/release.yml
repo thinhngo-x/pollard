@@ -90,7 +90,7 @@ jobs:
         with:
           path: artifacts
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           draft: true # publish manually once someone has reviewed the notes
           files: |
