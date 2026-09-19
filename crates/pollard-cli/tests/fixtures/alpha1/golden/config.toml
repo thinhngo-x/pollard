@@ -1,0 +1,10 @@
+# pollard repo config
+# data = ["./data"]
+offtree = ["*.md", "notes/"]
+output_dirs = ["outputs/"]
+checkpoint_dir = "ckpt/"
+seed_keys = ["seed", "random_seed"]
+# config_capture = "file:config.yaml"   # or "hydra", "sdk"
+# primary_metric = "val_loss"
+# remote = "/path/to/remote"
+remote = "../remote"

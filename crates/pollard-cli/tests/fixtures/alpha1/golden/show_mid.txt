@@ -1,0 +1,19 @@
+node      quaint-prince-3
+parent    lapsed-quail-1
+status    pruned
+created   2026-09-19T07:12:10.177171Z
+finished  2026-09-19T07:12:10.200378Z
+command   sh train.sh
+code      36b35f6130e7e344c046c4c65dd981be367de0ec
+config    de599683c30a41d27d907e08fd9d8a2d04b2e5812f3f3435cf8f4d91e4ba4868
+data      af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
+env       24bf151e9ad7e1f649c881631955299a311419530ff82a03618e6ca99b51fb4f
+recipe    19c7586b191821c83024f4efbebbc0d5feb425e5944ed7f6f00f30aef7fc9f4e
+lock_ok   true
+note
+  mid
+metrics
+  acc  0.2  @2  (2 points)
+  loss  1.5  @2  (2 points)
+last step 2
+reproduce: pollard fork quaint-prince-3 && uv sync --frozen

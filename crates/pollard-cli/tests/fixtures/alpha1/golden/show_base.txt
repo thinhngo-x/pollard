@@ -1,0 +1,22 @@
+node      daring-rye-2
+parent    lapsed-quail-1
+status    done
+created   2026-09-19T07:12:10.041994Z
+finished  2026-09-19T07:12:10.066514Z
+command   sh train.sh
+code      79d8dff9041459f5a965a5b8ad7a6e0616fd0332
+config    e7e5d32d05a4433e3d9e73d30838feb03f3d639f42542987555d9a79a250719f
+data      af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
+env       24bf151e9ad7e1f649c881631955299a311419530ff82a03618e6ca99b51fb4f
+recipe    9e8cb69ed4eca8d7ce152f6ae87a39aac0425e375512fb888a552f1e3ce71588
+lock_ok   true
+note
+  base
+metrics
+  acc  0.2  @2  (2 points)
+  loss  1.5  @2  (2 points)
+last step 2
+checkpoints: 2
+weights   1e7180c8a871d765759570729b662b4828a5a660c582670408adb03c7e3a7321
+  ckpt/step2.pt  26 bytes
+reproduce: pollard fork daring-rye-2 && uv sync --frozen

@@ -1,0 +1,19 @@
+node      stoic-raven-1
+parent    lapsed-quail-1
+status    pruned
+created   2026-09-19T07:12:11.071199Z
+finished  2026-09-19T07:12:11.096134Z
+command   sh train.sh
+code      9e8e4b60d67fc9206a7fdb83500a4f0ec08874ef
+config    c8cd7ee91503a207d462df20b484f5ec7012fe891c0a9eb5c885705de6f14b0c
+data      af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
+env       24bf151e9ad7e1f649c881631955299a311419530ff82a03618e6ca99b51fb4f
+recipe    f5043e53664b503930c117e922a5ee0d06f7ae0d73e10074f4b53f6d721cf560
+lock_ok   true
+note
+  ghost
+metrics
+  acc  0.2  @2  (2 points)
+  loss  1.5  @2  (2 points)
+last step 2
+reproduce: pollard fork stoic-raven-1 && uv sync --frozen
