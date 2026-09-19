@@ -294,6 +294,7 @@ mod tests {
             lock_ok: None,
             depth: 0,
             sweep: None,
+            pruned_at: None,
         };
         n.insert(&repo.db).unwrap();
         delta::store(repo, id, &Deltas::default()).unwrap();

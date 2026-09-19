@@ -12,7 +12,6 @@ pub enum Status {
     Done,
     Failed,
     Killed,
-    Pruned,
 }
 
 impl Status {
@@ -22,16 +21,16 @@ impl Status {
             Status::Done => "done",
             Status::Failed => "failed",
             Status::Killed => "killed",
-            Status::Pruned => "pruned",
         }
     }
-    pub fn parse(s: &str) -> Status {
+    /// `None` for anything but the four statuses (format 1's `pruned` included).
+    pub fn parse(s: &str) -> Option<Status> {
         match s {
-            "running" => Status::Running,
-            "done" => Status::Done,
-            "failed" => Status::Failed,
-            "killed" => Status::Killed,
-            _ => Status::Pruned,
+            "running" => Some(Status::Running),
+            "done" => Some(Status::Done),
+            "failed" => Some(Status::Failed),
+            "killed" => Some(Status::Killed),
+            _ => None,
         }
     }
 }
@@ -60,9 +59,14 @@ pub struct Node {
     pub depth: i64,
     /// sweep name when this node is a fan-out member
     pub sweep: Option<String>,
+    /// when the node was pruned (hidden, weights collectable); `None` = live.
+    /// Last and skipped when `None`, so an unpruned node's remote line is byte-identical
+    /// to format 1's and sync markers written by 0.1 stay valid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pruned_at: Option<String>,
 }
 
-pub const COLS: &str = "id,parent,code,config,data,env,recipe_hash,weights,docs,fork_step,status,created_at,finished_at,command,note,note_auto,lock_ok,depth,sweep";
+pub const COLS: &str = "id,parent,code,config,data,env,recipe_hash,weights,docs,fork_step,status,created_at,finished_at,command,note,note_auto,lock_ok,depth,sweep,pruned_at";
 
 pub fn recipe_hash(code: &str, config: &str, data: &str, env: &str) -> String {
     let mut h = blake3::Hasher::new();
@@ -74,8 +78,17 @@ pub fn recipe_hash(code: &str, config: &str, data: &str, env: &str) -> String {
 
 impl Node {
     pub fn from_row(r: &Row) -> rusqlite::Result<Node> {
+        let id: String = r.get(0)?;
+        let status: String = r.get(10)?;
+        let status = Status::parse(&status).ok_or_else(|| {
+            rusqlite::Error::FromSqlConversionFailure(
+                10,
+                rusqlite::types::Type::Text,
+                format!("node {id} has unknown status '{status}'").into(),
+            )
+        })?;
         Ok(Node {
-            id: r.get(0)?,
+            id,
             parent: r.get(1)?,
             code: r.get(2)?,
             config: r.get(3)?,
@@ -85,7 +98,7 @@ impl Node {
             weights: r.get(7)?,
             docs: r.get(8)?,
             fork_step: r.get(9)?,
-            status: Status::parse(&r.get::<_, String>(10)?),
+            status,
             created_at: r.get(11)?,
             finished_at: r.get(12)?,
             command: r.get(13)?,
@@ -94,12 +107,13 @@ impl Node {
             lock_ok: r.get(16)?,
             depth: r.get(17)?,
             sweep: r.get(18)?,
+            pruned_at: r.get(19)?,
         })
     }
 
     pub fn insert(&self, db: &Connection) -> Result<()> {
         db.execute(
-            &format!("INSERT INTO nodes ({COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)"),
+            &format!("INSERT INTO nodes ({COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)"),
             params![
                 self.id,
                 self.parent,
@@ -119,7 +133,8 @@ impl Node {
                 self.note_auto,
                 self.lock_ok,
                 self.depth,
-                self.sweep
+                self.sweep,
+                self.pruned_at
             ],
         )?;
         Ok(())

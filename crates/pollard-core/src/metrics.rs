@@ -145,6 +145,7 @@ mod tests {
             lock_ok: None,
             depth: 0,
             sweep: None,
+            pruned_at: None,
         }
         .insert(db)
         .unwrap();

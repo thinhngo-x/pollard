@@ -3,6 +3,19 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::node::{Node, Status};
+
+/// Nodes shown without `--all`: unpruned ones, plus pruned ones with an unpruned
+/// descendant (drawn as a placeholder so live work under them stays visible).
+fn shown(n: &Node, kids: &HashMap<Option<String>, Vec<&Node>>, out: &mut HashSet<String>) -> bool {
+    let mut any = n.pruned_at.is_none();
+    for k in kids.get(&Some(n.id.clone())).into_iter().flatten() {
+        any |= shown(k, kids, out);
+    }
+    if any {
+        out.insert(n.id.clone());
+    }
+    any
+}
 use crate::siblings::fmt_num;
 use crate::{Repo, Result, metrics, node};
 
@@ -60,7 +73,7 @@ pub fn render(repo: &Repo, o: &Opts) -> Result<String> {
         let hib = higher_is_better(k);
         let best = nodes
             .iter()
-            .filter(|n| n.status != Status::Pruned || o.all)
+            .filter(|n| n.pruned_at.is_none() || o.all)
             .filter_map(|n| val.get(&n.id).map(|v| (n, *v)))
             .max_by(|a, b| {
                 if hib {
@@ -73,8 +86,13 @@ pub fn render(repo: &Repo, o: &Opts) -> Result<String> {
             best_path.extend(node::ancestry(&repo.db, &b.id)?.into_iter().map(|n| n.id));
         }
     }
+    let mut visible = HashSet::new();
+    for r in kids.get(&None).into_iter().flatten() {
+        shown(r, &kids, &mut visible);
+    }
     let ctx = Ctx {
         o,
+        visible: &visible,
         kids: &kids,
         pins: &pins,
         val: &val,
@@ -89,6 +107,7 @@ pub fn render(repo: &Repo, o: &Opts) -> Result<String> {
 
 struct Ctx<'a> {
     o: &'a Opts,
+    visible: &'a HashSet<String>,
     kids: &'a HashMap<Option<String>, Vec<&'a Node>>,
     pins: &'a HashMap<String, Vec<String>>,
     val: &'a HashMap<String, f64>,
@@ -112,7 +131,7 @@ impl<'a> Ctx<'a> {
         let mut items: Vec<Item> = vec![];
         let mut sweeps: BTreeMap<String, usize> = BTreeMap::new();
         for n in list {
-            if n.status == Status::Pruned && !self.o.all {
+            if !self.o.all && !self.visible.contains(&n.id) {
                 continue;
             }
             match &n.sweep {
@@ -174,7 +193,10 @@ impl<'a> Ctx<'a> {
                         .get(&Some(n.id.clone()))
                         .cloned()
                         .unwrap_or_default();
-                    let collapsed = n.status == Status::Failed && !self.o.all && !sub.is_empty();
+                    let collapsed = n.status == Status::Failed
+                        && n.pruned_at.is_none()
+                        && !self.o.all
+                        && !sub.is_empty();
                     if collapsed {
                         out.push_str(&format!(
                             "{prefix}{cont}└─ … {} collapsed\n",
@@ -200,6 +222,9 @@ impl<'a> Ctx<'a> {
             s.push_str(" (@)");
         }
         s.push_str(&format!("  {}", n.status.as_str()));
+        if n.pruned_at.is_some() {
+            s.push_str(" (pruned)");
+        }
         if let Some(v) = self.val.get(&n.id) {
             s.push_str(&format!("  {}", fmt_num(*v)));
         }

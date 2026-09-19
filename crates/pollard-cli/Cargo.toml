@@ -9,7 +9,7 @@ repository.workspace = true
 readme = "../../README.md"
 
 [dependencies]
-pollard-core = { version = "0.1.0-alpha.1", path = "../pollard-core" }
+pollard-core = { version = "0.2.0-alpha.1", path = "../pollard-core" }
 clap = { version = "4.5", features = ["derive"] }
 anyhow = "1"
 serde_json = "1"
