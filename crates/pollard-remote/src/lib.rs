@@ -3,7 +3,8 @@
 //! Layout (mirrors `.pollard/`): `objects/ab/cdef…` and `chunkmaps/ab/cdef…` as individual
 //! files in stored form, chunks in `packs/<name>.pack` (concatenated zstd chunks, ≤ 64 MB)
 //! with `packs/<name>.idx` (`hash offset len` lines, written after the pack),
-//! plus `nodes.jsonl` and `pins.json` (owned by pollard-core's sync).
+//! plus `FORMAT`, `nodes/*.jsonl` segments and the format-1 `nodes.jsonl` / `pins.json`
+//! (owned by pollard-core's sync).
 //! Blobs are content-addressed, so a push only uploads what the remote lacks.
 
 use std::collections::HashSet;
@@ -118,8 +119,26 @@ impl Remote {
             .map_err(|e| self.err(e))
     }
 
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    /// Size and version tag (etag, else modification time) of a file, or `None` if absent.
+    /// Changes whenever the file's content does; costs no download.
+    pub fn stat(&self, name: &str) -> Result<Option<String>> {
+        match self.rt.block_on(self.store.head(&OPath::from(name))) {
+            Ok(m) => Ok(Some(format!(
+                "{}:{}",
+                m.size,
+                m.e_tag.unwrap_or_else(|| m.last_modified.to_rfc3339())
+            ))),
+            Err(object_store::Error::NotFound { .. }) => Ok(None),
+            Err(e) => Err(self.err(e)),
+        }
+    }
+
     /// Names (relative to the remote root) under `prefix`.
-    fn list(&self, prefix: &str) -> Result<Vec<String>> {
+    pub fn list(&self, prefix: &str) -> Result<Vec<String>> {
         let v: Vec<_> = self
             .rt
             .block_on(
