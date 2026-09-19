@@ -141,11 +141,12 @@ pub fn start(repo: &mut Repo, o: &RunOpts) -> Result<(OpRecord, Launch)> {
         let dup: Option<(String, String)> = repo
             .db
             .query_row(
-                "SELECT id, status FROM nodes WHERE recipe_hash=?1 AND command NOT LIKE 'pollard import %' ORDER BY status IN ('running','done') DESC LIMIT 1",
+                "SELECT id, status || IIF(pruned_at IS NULL, '', ', pruned') FROM nodes WHERE recipe_hash=?1 AND command NOT LIKE 'pollard import %' ORDER BY (status IN ('running','done') AND pruned_at IS NULL) DESC LIMIT 1",
                 [&recipe],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
+        // pruned matches only get the notice (their status reads e.g. "done, pruned")
         match dup {
             Some((d, st)) if (st == "running" || st == "done") && !o.force => {
                 return Err(Error::Duplicate(d));
@@ -203,6 +204,7 @@ pub fn start(repo: &mut Repo, o: &RunOpts) -> Result<(OpRecord, Launch)> {
         lock_ok,
         depth: parent_node.as_ref().map_or(0, |p| p.depth + 1),
         sweep: o.sweep.clone(),
+        pruned_at: None,
     };
     let rec = ops::record(repo, Some(manifest_hash), |repo| {
         n.insert(&repo.db)?;
@@ -398,7 +400,7 @@ fn set_config(repo: &Repo, node_id: &str, cfg: &Value) -> Result<()> {
     let dup: Option<String> = repo
         .db
         .query_row(
-            "SELECT id FROM nodes WHERE recipe_hash=?1 AND status!='pruned' AND id!=?2 LIMIT 1",
+            "SELECT id FROM nodes WHERE recipe_hash=?1 AND pruned_at IS NULL AND id!=?2 LIMIT 1",
             [&recipe, node_id],
             |r| r.get(0),
         )

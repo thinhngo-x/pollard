@@ -86,7 +86,7 @@ enum Cmd {
     },
     /// Full record of a node
     Show { node: String },
-    /// Mark a subtree pruned
+    /// Hide a subtree (sets `pruned`; statuses stay) and let gc free its weights
     Prune {
         node: String,
         #[arg(long)]
@@ -509,6 +509,9 @@ fn show(repo: &Repo, node: &str) -> Result<String> {
         n.fork_step.map(|s| format!(" @{s}")).unwrap_or_default()
     )?;
     writeln!(o, "status    {}", n.status.as_str())?;
+    if let Some(p) = &n.pruned_at {
+        writeln!(o, "pruned    {p}")?;
+    }
     if let Some(s) = &n.sweep {
         writeln!(o, "sweep     {s}")?;
     }

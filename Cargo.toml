@@ -5,6 +5,6 @@ members = ["crates/*"]
 [workspace.package]
 edition = "2024"
 rust-version = "1.89"
-version = "0.1.0-alpha.1"
+version = "0.2.0-alpha.1"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/thinhngo-x/pollard"

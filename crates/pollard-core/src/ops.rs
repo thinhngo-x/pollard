@@ -21,14 +21,15 @@ struct Snap {
     #[serde(default)]
     fork_step: Option<String>,
     nodes: Vec<Node>,
-    pins: Vec<(String, String)>,
+    /// `(name, node_id)`; format-1 snapshots (always named) decode unchanged
+    pins: Vec<(Option<String>, String)>,
 }
 
 /// Snapshots are zstd-compressed JSON kept in the `ops` row (local state; never synced).
 fn snapshot(repo: &Repo) -> Result<Vec<u8>> {
     let mut st = repo
         .db
-        .prepare("SELECT name, node_id FROM pins ORDER BY name")?;
+        .prepare("SELECT name, node_id FROM pins ORDER BY name, node_id")?;
     let pins = st
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
@@ -68,9 +69,19 @@ fn restore(repo: &Repo, before: &[u8], after: &[u8]) -> Result<()> {
                 let mut value = serde_json::to_value(current)?;
                 let old = serde_json::to_value(n)?;
                 let new = serde_json::to_value(a)?;
-                for (key, old_value) in old.as_object().unwrap() {
-                    if new.get(key) != Some(old_value) && value.get(key) == new.get(key) {
-                        value[key] = old_value.clone();
+                // A field missing on one side (e.g. `pruned_at` when unset) counts as null.
+                let get = |v: &serde_json::Value, k: &str| {
+                    v.get(k).cloned().unwrap_or(serde_json::Value::Null)
+                };
+                let keys: std::collections::BTreeSet<&String> = old
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .chain(new.as_object().unwrap().keys())
+                    .collect();
+                for key in keys {
+                    if get(&new, key) != get(&old, key) && get(&value, key) == get(&new, key) {
+                        value[key] = get(&old, key);
                     }
                 }
                 serde_json::from_value(value)?
@@ -81,17 +92,19 @@ fn restore(repo: &Repo, before: &[u8], after: &[u8]) -> Result<()> {
         repo.db.execute("DELETE FROM nodes WHERE id=?1", [&n.id])?;
         restored.insert(&repo.db)?;
     }
-    for (name, id) in &after.pins {
-        if !before.pins.contains(&(name.clone(), id.clone())) {
-            repo.db
-                .execute("DELETE FROM pins WHERE name=?1 AND node_id=?2", [name, id])?;
+    for p in &after.pins {
+        if !before.pins.contains(p) {
+            repo.db.execute(
+                "DELETE FROM pins WHERE name IS ?1 AND node_id=?2",
+                params![p.0, p.1],
+            )?;
         }
     }
-    for (name, id) in &before.pins {
-        if !after.pins.contains(&(name.clone(), id.clone())) {
+    for p in &before.pins {
+        if !after.pins.contains(p) {
             repo.db.execute(
                 "INSERT OR REPLACE INTO pins(name,node_id) VALUES(?1,?2)",
-                [name, id],
+                params![p.0, p.1],
             )?;
         }
     }
@@ -180,6 +193,18 @@ pub fn undo(repo: &mut Repo, n: usize) -> Result<OpRecord> {
         })?
         .collect::<rusqlite::Result<_>>()?
     };
+    // Snapshots from before the format-2 upgrade are never restored (op-log barrier).
+    let barrier: i64 = repo
+        .meta("migrated_at_op")?
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    if rows.iter().any(|r| r.0 <= barrier) {
+        let since = rows.iter().take_while(|r| r.0 > barrier).count();
+        return Err(msg(format!(
+            "cannot undo past the format-2 upgrade ({since} op{} since it); nothing undone",
+            if since == 1 { "" } else { "s" }
+        )));
+    }
     if rows.len() < n {
         return Err(msg(format!("undo: only {} op(s) in the log", rows.len())));
     }
@@ -193,7 +218,7 @@ pub fn undo(repo: &mut Repo, n: usize) -> Result<OpRecord> {
     };
     let pruned_before: Vec<String> = node::all(&repo.db)?
         .into_iter()
-        .filter(|n| n.status == node::Status::Pruned)
+        .filter(|n| n.pruned_at.is_some())
         .map(|n| n.id)
         .collect();
     let rec = record(repo, wc_now, |repo| {
@@ -207,7 +232,7 @@ pub fn undo(repo: &mut Repo, n: usize) -> Result<OpRecord> {
     }
     // Un-pruned nodes whose weights `gc` already collected (§3: gc is the point of no return).
     for id in pruned_before {
-        if let Some(n) = node::get(&repo.db, &id)?.filter(|n| n.status != node::Status::Pruned) {
+        if let Some(n) = node::get(&repo.db, &id)?.filter(|n| n.pruned_at.is_none()) {
             let gone = crate::weights::missing_weights(repo, &n)?;
             if !gone.is_empty() {
                 eprintln!(
@@ -225,4 +250,40 @@ pub fn undo(repo: &mut Repo, n: usize) -> Result<OpRecord> {
         },
         ..rec
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pins(r: &Repo) -> Vec<(Option<String>, String)> {
+        let mut st =
+            r.db.prepare("SELECT name, node_id FROM pins ORDER BY name")
+                .unwrap();
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    /// Format 2: a snapshot holding an unnamed pin `(None, id)` restores it.
+    #[test]
+    fn unnamed_pin_survives_undo() {
+        let t = tempfile::tempdir().unwrap();
+        let mut r = Repo::init(t.path()).unwrap();
+        r.db.execute_batch("INSERT INTO pins(node_id, name) VALUES('a', NULL), ('a', 'paper');")
+            .unwrap();
+        let both = pins(&r);
+        record(&mut r, None, |r| {
+            r.db.execute("DELETE FROM pins", [])?;
+            Ok("a".into())
+        })
+        .unwrap();
+        assert!(pins(&r).is_empty());
+        undo(&mut r, 1).unwrap();
+        assert_eq!(pins(&r), both);
+        assert_eq!(both[0], (None, "a".to_string()));
+        undo(&mut r, 1).unwrap(); // undo of the undo
+        assert!(pins(&r).is_empty());
+    }
 }
