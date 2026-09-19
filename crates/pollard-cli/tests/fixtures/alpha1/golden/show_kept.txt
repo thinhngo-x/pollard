@@ -1,0 +1,22 @@
+node      honest-book-8
+parent    lapsed-quail-1
+status    pruned
+created   2026-09-19T07:12:10.794291Z
+finished  2026-09-19T07:12:10.819142Z
+command   sh train.sh
+code      159c62077c1f3579d3c09d641e4db93f4986e303
+config    c9c8a3a0177b041c746f06a619a43600105169d19a3d4290d263a61b4229d474
+data      af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
+env       24bf151e9ad7e1f649c881631955299a311419530ff82a03618e6ca99b51fb4f
+recipe    4cad9fe79754a74d2cbeefa5d40bdaacfad97dac87f0f289559d9815cbe86608
+lock_ok   true
+note
+  kept
+metrics
+  acc  0.2  @2  (2 points)
+  loss  1.5  @2  (2 points)
+last step 2
+checkpoints: 2
+weights   679efb18c9fa7923ee2cadaa6035596b69d5ef08a8b0942e08df19dcec7545be
+  ckpt/step2.pt  27 bytes
+reproduce: pollard fork honest-book-8 && uv sync --frozen

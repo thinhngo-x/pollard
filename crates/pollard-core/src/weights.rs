@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use pollard_objects::{Entry, GcStats, MODE_FILE, Manifest, WalkOptions};
 use rusqlite::params;
 
-use crate::node::{self, Node, Status};
+use crate::node::{self, Node};
 use crate::{IoCtx, OpRecord, Repo, Result, msg, ops};
 
 /// `(mtime_ns, size)` per file under the checkpoint dir.
@@ -196,15 +196,19 @@ pub fn restore_step(repo: &Repo, node: &str, step: i64) -> Result<Option<(String
     }
 }
 
-/// `prune <node> [--keep-weights]`: mark the node and its whole subtree `pruned`.
+/// `prune <node> [--keep-weights]`: set `pruned_at` on the node and its whole subtree
+/// (already-pruned nodes keep their time). Statuses stay as they are.
 /// Recipe, deltas and metrics stay; weights become collectable by `gc` unless kept.
 pub fn prune(repo: &mut Repo, node: &str, keep_weights: bool) -> Result<OpRecord> {
     let id = repo.resolve(node)?;
     ops::record(repo, None, |repo| {
+        let now = crate::now();
         let mut stack = vec![id.clone()];
         while let Some(n) = stack.pop() {
-            repo.db
-                .execute("UPDATE nodes SET status='pruned' WHERE id=?1", [&n])?;
+            repo.db.execute(
+                "UPDATE nodes SET pruned_at=COALESCE(pruned_at, ?1) WHERE id=?2",
+                [&now, &n],
+            )?;
             let key = format!("keep_weights:{n}");
             if keep_weights {
                 repo.set_meta(&key, "1")?
@@ -238,7 +242,7 @@ pub fn gc(repo: &Repo) -> Result<GcStats> {
     let _lock = repo.lock()?;
     let mut live = HashSet::new();
     for n in node::all(&repo.db)? {
-        if n.status != Status::Pruned || repo.meta(&format!("keep_weights:{}", n.id))?.is_some() {
+        if n.pruned_at.is_none() || repo.meta(&format!("keep_weights:{}", n.id))?.is_some() {
             live.extend(n.weights);
         }
         live.extend(n.docs);
@@ -258,6 +262,7 @@ pub fn gc(repo: &Repo) -> Result<GcStats> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::node::Status;
     use std::fs;
 
     #[test]
@@ -294,6 +299,7 @@ mod tests {
             lock_ok: None,
             depth: 0,
             sweep: None,
+            pruned_at: None,
         }
         .insert(&repo.db)
         .unwrap();
@@ -369,7 +375,8 @@ mod tests {
         // prune b then gc: frees only b's unique chunks; a's checkpoints still readable
         assert_eq!(gc(&repo).unwrap().chunks_removed, 0);
         prune(&mut repo, "b", false).unwrap();
-        assert_eq!(repo.node("b").unwrap().status, Status::Pruned);
+        let b = repo.node("b").unwrap();
+        assert!(b.status == Status::Done && b.pruned_at.is_some());
         let st = gc(&repo).unwrap();
         assert!(st.chunks_removed > 0 && st.chunks_removed < 5, "{st:?}");
         for (e, _) in checkpoints(&repo, &repo.node("a").unwrap()).unwrap() {

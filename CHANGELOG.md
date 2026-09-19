@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased (0.2.0-alpha.1)
+
+### Upgrade notes
+
+This release changes the repo and remote format ("format 2"). The upgrade is one-way.
+
+| Area | What changes | What to do |
+|---|---|---|
+| Repo (`.pollard/`) | The first command after upgrading migrates the repo and prints one notice. The database moves to `.pollard/state.sqlite`; `.pollard/db.sqlite` becomes a stub directory so 0.1.0-alpha.1 fails instead of misreading it. The old database is kept at `.pollard/backup/db-format1.sqlite` (an existing backup is never overwritten; a new one gets a `-<unix seconds>` suffix). | Nothing. Keep the backup until you are satisfied. |
+| Old binaries | pollard 0.1.0-alpha.1 exits with an error, and writes nothing, on a migrated repo or a converted remote. | Upgrade every machine and CI image that touches the repo or remote. |
+| Pruned nodes | `pruned` is no longer a status but a flag: a pruned node keeps its `done`/`failed`/`killed` status, read back from the op log. When the op log has no record (e.g. a node pulled already pruned), the status is guessed (`done` if the run finished, else `killed`) and the notice lists those ids. Runs started under a pruned node after the prune are no longer hidden in `po tree`. | Review `po tree` once, and re-prune if needed. |
+| Op log | `po undo` does not cross the upgrade: a request that would reach an op from before it is refused whole. | Undo anything you want undone **before** upgrading. |
+| Pins | Named pins are unchanged. | None. |
+| Remote | The first `po push` from 0.2 converts the remote (`FORMAT`, one new `nodes/<ts>-<salt>-<n>.jsonl` segment per push) and re-sends every node record once (KBs per node, no weights). 0.2 still reads unconverted remotes. | **Everyone on a shared remote upgrades together.** After the conversion, 0.1.0-alpha.1 `push`/`pull` fail. |
+
+**Rolling back** to 0.1.0-alpha.1 (from the repo root), then reinstall 0.1.0-alpha.1:
+
+```sh
+rm -r .pollard/db.sqlite .pollard/state.sqlite*
+mv .pollard/backup/db-format1.sqlite .pollard/db.sqlite
+```
+
+Changes made after the upgrade are lost by a rollback. A converted remote cannot be rolled back.
+
+### Format 2 (phase 1)
+- Repo format version in `PRAGMA user_version`; forward migrations run on open under `.pollard/lock`, in one transaction, on a temporary copy renamed into place, so an interrupted upgrade is finished by the next command. A repo or remote written by a newer format is refused with "Upgrade pollard." and left untouched.
+- Node record: `pruned_at` timestamp replaces the `pruned` status. `po show` prints `status` and `pruned <time>` separately; `po tree --all` marks pruned nodes `done (pruned)`. An unknown status in the database or in a remote line is an error naming the node and the value. `--json` outputs never carry `pruned` as a status.
+- `po prune` keeps its subtree behaviour but sets the flag; already-pruned nodes keep their prune time.
+- `po tree`: a pruned node with unpruned descendants is shown as a placeholder with them, so no live run is hidden. Fully pruned subtrees stay hidden unless `--all`.
+- Duplicate check: a pruned match only prints a notice (`same recipe as <id> (done, pruned)`), as before.
+- Pins are stored as `(node_id, name)` with an optional name (storage only; commands unchanged).
+- Remote: per-push segment files fix the concurrent-push race (two pushes could drop one another's node lines). Pin changes are one record each, so concurrent pin edits from two clones both survive; only two edits of the same pin name are last-writer-wins. `pull` downloads only segments it has not read.
+
 ## 0.1.0-alpha.1 — 2026-09-18
 
 First alpha release. All nine milestones (M1–M9) are implemented with green tests

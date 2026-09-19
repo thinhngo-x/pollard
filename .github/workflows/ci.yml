@@ -40,8 +40,15 @@ jobs:
 
       # The one #[ignore]d test (a 1000-node timing budget) only holds in --release; it's
       # not run here to keep CI fast and non-flaky, and gets checked separately pre-release.
+      # Format-2 loud-failure tests (BACKLOG F3, F4, F11) run the published alpha.1 binary
+      # against migrated repos and converted remotes; they skip when POLLARD_ALPHA1_BIN is unset.
+      - name: Install pollard 0.1.0-alpha.1
+        run: cargo install pollard-cli --version 0.1.0-alpha.1 --locked --root "$RUNNER_TEMP/alpha1"
+
       - name: cargo test
         run: cargo test --workspace
+        env:
+          POLLARD_ALPHA1_BIN: ${{ runner.temp }}/alpha1/bin/pollard
 
   msrv:
     # Builds on the rust-version declared in Cargo.toml; the rust job uses latest stable,

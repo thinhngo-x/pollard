@@ -1,0 +1,19 @@
+node      bent-drone-6
+parent    quaint-prince-3
+status    pruned
+created   2026-09-19T07:12:10.532040Z
+finished  2026-09-19T07:12:10.554106Z
+command   sh train.sh
+code      3e6c6648c126890f8444fbccf3e1f075b8291afd
+config    717f6ed12fd7569b2dbb465de127968ae5df6edbf6aed192e53a89b8447c10f1
+data      af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
+env       24bf151e9ad7e1f649c881631955299a311419530ff82a03618e6ca99b51fb4f
+recipe    8cf72578a73bca8a6aca0e293fd8053093daf03e44950af65c1e07ede1254b89
+lock_ok   true
+note
+  stopped
+metrics
+  acc  0.2  @2  (2 points)
+  loss  1.5  @2  (2 points)
+last step 2
+reproduce: pollard fork bent-drone-6 && uv sync --frozen

@@ -18,10 +18,11 @@ fn failed_blob_push_can_be_retried() {
     r.fail(&["push"]);
     fs::remove_file(remote.path().join("objects")).unwrap();
     r.ok(&["push"]);
+    // format 2: node lines live in per-push segments under nodes/
+    let segs = fs::read_dir(remote.path().join("nodes")).unwrap();
     assert!(
-        fs::read_to_string(remote.path().join("nodes.jsonl"))
-            .unwrap()
-            .contains(&id)
+        segs.flatten()
+            .any(|e| fs::read_to_string(e.path()).unwrap().contains(&id))
     );
     let clone = Repo::init();
     clone.set_config(

@@ -1,0 +1,19 @@
+node      lapsed-quail-1  [root-pin]
+parent    (root)
+status    done
+created   2026-09-19T07:12:09.955825Z
+finished  2026-09-19T07:12:09.980667Z
+command   sh train.sh
+code      676a6740e9d05ff447a2c67c231c2e9a9ca0650d
+config    eb8fe94bc7d734e8e413cc57485430c4cccd35b001ba5606a358827076f71155
+data      af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
+env       24bf151e9ad7e1f649c881631955299a311419530ff82a03618e6ca99b51fb4f
+recipe    232292ae062d4f68f1977fcb2b35bb4aac00b908626edf73398f662e04d7460b
+lock_ok   true
+note
+  root
+metrics
+  acc  0.2  @2  (2 points)
+  loss  1.5  @2  (2 points)
+last step 2
+reproduce: pollard fork lapsed-quail-1 && uv sync --frozen

@@ -1,0 +1,22 @@
+node      equal-mound-4  [best-v1, paper]
+parent    quaint-prince-3
+status    pruned
+created   2026-09-19T07:12:10.262337Z
+finished  2026-09-19T07:12:10.288894Z
+command   sh train.sh
+code      5c1458f586821fa4bb17246ff27f9ddee33ac19d
+config    33b8e5bc6390c62b3c4d19faa900439fd2330bccc0fb2d5d700e48098e615598
+data      af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
+env       24bf151e9ad7e1f649c881631955299a311419530ff82a03618e6ca99b51fb4f
+recipe    c42a68f1e74857a2b9f2e7ca9baf6c5323627dd536f3170aeef7fa33438dcec1
+lock_ok   true
+note
+  best
+metrics
+  acc  0.2  @2  (2 points)
+  loss  1.5  @2  (2 points)
+last step 2
+checkpoints: 2
+weights   159e2b49661be4b53adccc47e6a486b53784d08432e91d9c35e40e7abd890a07
+  ckpt/step2.pt  27 bytes
+reproduce: pollard fork equal-mound-4 && uv sync --frozen

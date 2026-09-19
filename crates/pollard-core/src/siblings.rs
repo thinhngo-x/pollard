@@ -61,7 +61,7 @@ pub fn build(repo: &Repo, parent: &str, o: &Opts) -> Result<Table> {
     let seed_keys = &repo.config.seed_keys;
     let kids: Vec<Member> = node::children(&repo.db, parent)?
         .into_iter()
-        .filter(|n| o.all || n.status != Status::Pruned)
+        .filter(|n| o.all || n.pruned_at.is_none())
         .filter(|n| o.only.as_ref().is_none_or(|v| v.contains(&n.id)))
         .map(|n| {
             Ok(Member {

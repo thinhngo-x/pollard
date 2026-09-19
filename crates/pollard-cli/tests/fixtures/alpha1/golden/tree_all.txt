@@ -1,0 +1,10 @@
+lapsed-quail-1 [root-pin]  done  root
+├─ daring-rye-2  done  base
+├─ quaint-prince-3  pruned  mid
+│  ├─ equal-mound-4 [best-v1, paper]  pruned  best
+│  ├─ lissom-angle-5  pruned  crashed
+│  ├─ bent-drone-6  pruned  stopped
+│  └─ sudden-rocket-7 (@)  done  late
+├─ honest-book-8  pruned  kept
+├─ stoic-raven-1  pruned  ghost
+└─ cloven-attic-9  pruned  redo
