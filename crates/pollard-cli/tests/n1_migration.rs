@@ -670,20 +670,23 @@ fn f6_fully_pruned_subtree_hidden() {
 fn f6_siblings_hides_pruned_unless_all() {
     let (f, _) = migrated();
     let mid = f.id("mid");
+    // siblings headers show a pin name instead of the id when there is one (M8)
+    let labels = |role: &str| match role {
+        "best" => vec![f.id(role), "best-v1".into(), "paper".into()],
+        _ => vec![f.id(role)],
+    };
+    let shown = |s: &str, role: &str| labels(role).iter().any(|l| s.contains(l.as_str()));
     let s = f.repo.ok(&["siblings", &mid]).stdout;
-    assert!(s.contains(&f.id("late")), "{s}");
+    assert!(shown(&s, "late"), "{s}");
     for role in ["best", "crashed", "stopped"] {
         assert!(
-            !s.contains(&f.id(role)),
+            !shown(&s, role),
             "pruned {role} in siblings without --all:\n{s}"
         );
     }
     let s = f.repo.ok(&["siblings", &mid, "--all"]).stdout;
     for role in ["late", "best", "crashed", "stopped"] {
-        assert!(
-            s.contains(&f.id(role)),
-            "{role} missing from siblings --all:\n{s}"
-        );
+        assert!(shown(&s, role), "{role} missing from siblings --all:\n{s}");
     }
 }
 
