@@ -68,26 +68,19 @@ fn assert_fixture_notice(f: &Fixture, o: &Out, backup: &str) {
         format!("  backup of the old database: {backup}"),
         "{o}"
     );
-    // Optional lines: BACKLOG writes them as `[ … ]` without saying the indent; any indent ok.
-    let pruned = n[2].trim_start();
-    let count = pruned
-        .strip_prefix("pruned is now a flag: ")
-        .and_then(|r| r.strip_suffix(" pruned nodes keep their done/failed/killed status"))
-        .unwrap_or_else(|| panic!("bad `pruned is now a flag` line {pruned:?}\n{o}"));
-    // 7 pruned nodes, one of them (ghost) guessed. BACKLOG does not say whether N counts it.
-    assert!(
-        count == "7" || count == "6",
-        "pruned count {count} (expected 7, or 6 excluding the guessed one)\n{o}"
+    // Optional lines, indented two spaces (Lead dev). N counts the guessed node too: 7.
+    assert_eq!(
+        n[2], "  pruned is now a flag: 7 pruned nodes keep their done/failed/killed status",
+        "{o}"
     );
     assert_eq!(
-        n[3].trim_start(),
+        n[3],
         format!(
-            "guessed status (no op-log record): {} (done)",
+            "  guessed status (no op-log record): {} (done)",
             f.id("ghost")
         ),
         "{o}"
     );
-    assert!(n[2].starts_with("  ") && n[3].starts_with("  "), "{o}");
     assert_eq!(n[4], NOTICE_UNDO, "{o}");
     assert_eq!(n[5], NOTICE_ROLLBACK, "{o}");
 }
