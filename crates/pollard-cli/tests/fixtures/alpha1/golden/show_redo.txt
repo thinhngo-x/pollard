@@ -1,0 +1,19 @@
+node      cloven-attic-9
+parent    lapsed-quail-1
+status    pruned
+created   2026-09-19T07:12:11.280434Z
+finished  2026-09-19T07:12:11.302176Z
+command   sh train.sh
+code      b07071acebfa599168967518d97076fb5ba829cd
+config    4fad83db0ca488a6afb7b53e86a39af62db9905729d96dff5a7e68ddf58584b1
+data      af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
+env       24bf151e9ad7e1f649c881631955299a311419530ff82a03618e6ca99b51fb4f
+recipe    6ab3f248a63df9d822dcdad44f48810eb53895643702cacb8936e91053e59238
+lock_ok   true
+note
+  redo
+metrics
+  acc  0.2  @2  (2 points)
+  loss  1.5  @2  (2 points)
+last step 2
+reproduce: pollard fork cloven-attic-9 && uv sync --frozen

@@ -66,6 +66,7 @@ pub fn import(repo: &mut Repo, rev: &str) -> Result<OpRecord> {
         lock_ok: None,
         depth: 0,
         sweep: None,
+        pruned_at: None,
     };
     ops::record(repo, None, |repo| {
         n.insert(&repo.db)?;

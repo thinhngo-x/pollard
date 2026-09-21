@@ -1,0 +1,19 @@
+node      lissom-angle-5
+parent    quaint-prince-3
+status    pruned
+created   2026-09-19T07:12:10.409296Z
+finished  2026-09-19T07:12:10.433583Z
+command   sh train.sh
+code      c3f1b2e6b831061edcbfc51eab0ff7f53a2cab19
+config    b853c26f13f6303c6a4fcf298107f863bf65f516bd5a2092ced5ad4008a05c19
+data      af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
+env       24bf151e9ad7e1f649c881631955299a311419530ff82a03618e6ca99b51fb4f
+recipe    a6ab983dc0dcc032de776935e414b2436cba395ae1b261588d26e15941e9052a
+lock_ok   true
+note
+  crashed
+metrics
+  acc  0.2  @2  (2 points)
+  loss  1.5  @2  (2 points)
+last step 2
+reproduce: pollard fork lissom-angle-5 && uv sync --frozen

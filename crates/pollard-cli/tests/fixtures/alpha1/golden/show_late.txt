@@ -1,0 +1,19 @@
+node      sudden-rocket-7
+parent    quaint-prince-3
+status    done
+created   2026-09-19T07:12:10.690710Z
+finished  2026-09-19T07:12:10.713701Z
+command   sh train.sh
+code      07c954a2c2f02eec1127c992e222e3f02e798dff
+config    54cbe3f68f71794fcb18f96d6a908e6b42a7f2d6df818adb5fd8fb47b877f310
+data      af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
+env       24bf151e9ad7e1f649c881631955299a311419530ff82a03618e6ca99b51fb4f
+recipe    0b7bbb93a14f3bc8bf5c18602a317bfc83c18680a09660856f69370561e9f9dc
+lock_ok   true
+note
+  late
+metrics
+  acc  0.2  @2  (2 points)
+  loss  1.5  @2  (2 points)
+last step 2
+reproduce: pollard fork sudden-rocket-7 && uv sync --frozen

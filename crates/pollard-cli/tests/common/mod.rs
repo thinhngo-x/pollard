@@ -402,3 +402,332 @@ pub fn git(r: &Repo, args: &str) -> String {
 pub fn git_init_commit(r: &Repo) {
     r.sh("git init -q -b main . && git add -A && git commit -q -m init");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Phase 1 (format 2) helpers: the alpha.1 fixture (BACKLOG F0), sqlite, file-state snapshots.
+// ---------------------------------------------------------------------------------------------
+
+/// `tests/fixtures/alpha1/` (make.sh, repo.tar.gz, remote.tar.gz, golden/).
+pub fn fixture_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/alpha1")
+}
+
+/// A file from the fixture's `golden/` (alpha.1's own output).
+pub fn golden(name: &str) -> String {
+    fs::read_to_string(fixture_dir().join("golden").join(name))
+        .unwrap_or_else(|e| panic!("golden/{name}: {e}"))
+}
+
+/// The published alpha.1 binary, from `POLLARD_ALPHA1_BIN`. `None` (with a note on stderr)
+/// when unset, so CI-only tests skip locally. Usage:
+/// `let Some(a1) = alpha1_bin("test_name") else { return };`
+pub fn alpha1_bin(test: &str) -> Option<PathBuf> {
+    match std::env::var_os("POLLARD_ALPHA1_BIN").map(PathBuf::from) {
+        Some(p) if p.is_file() => Some(p),
+        other => {
+            eprintln!(
+                "SKIP {test}: needs the published alpha.1 binary; set POLLARD_ALPHA1_BIN \
+                 (cargo install pollard-cli --version 0.1.0-alpha.1 --locked --root <dir>) [got {other:?}]"
+            );
+            None
+        }
+    }
+}
+
+/// A fresh copy of the alpha.1 fixture: `<tmp>/repo` (the working copy, `remote = "../remote"`)
+/// and `<tmp>/remote` (the legacy alpha.1 remote).
+pub struct Fixture {
+    pub repo: Repo,
+    pub remote: PathBuf,
+    ids: std::collections::BTreeMap<String, String>,
+}
+
+impl Fixture {
+    pub fn new() -> Fixture {
+        let tmp = tempfile::tempdir().unwrap();
+        for t in ["repo.tar.gz", "remote.tar.gz"] {
+            let o = Command::new("tar")
+                .arg("xzf")
+                .arg(fixture_dir().join(t))
+                .arg("-C")
+                .arg(tmp.path())
+                .output()
+                .expect("tar");
+            assert!(o.status.success(), "untar {t}: {o:?}");
+        }
+        let root = tmp.path().join("repo");
+        let aux = tmp.path().join("aux");
+        let remote = tmp.path().join("remote");
+        fs::create_dir_all(&aux).unwrap();
+        let ids = serde_json::from_str(&golden("ids.json")).unwrap();
+        Fixture {
+            repo: Repo { tmp, root, aux },
+            remote,
+            ids,
+        }
+    }
+
+    /// Node id of a fixture role (`root`, `base`, `mid`, `best`, `crashed`, `stopped`, `late`,
+    /// `kept`, `ghost`, `redo`).
+    pub fn id(&self, role: &str) -> String {
+        self.ids
+            .get(role)
+            .unwrap_or_else(|| panic!("no role {role} in golden/ids.json"))
+            .clone()
+    }
+
+    pub fn roles(&self) -> Vec<(String, String)> {
+        self.ids
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
+    /// Timestamp of the newest op whose command is exactly `cmd` (e.g. `pollard prune <id>`),
+    /// from alpha.1's `op log` in golden/.
+    pub fn op_ts(cmd: &str) -> String {
+        golden("op_log.txt")
+            .lines()
+            .find_map(|l| {
+                let mut it = l.split_whitespace();
+                let _n = it.next()?;
+                let ts = it.next()?;
+                let rest: Vec<&str> = it.collect();
+                (rest.join(" ") == cmd).then(|| ts.to_string())
+            })
+            .unwrap_or_else(|| panic!("no op `{cmd}` in golden/op_log.txt"))
+    }
+
+    /// A second working copy of the unmigrated fixture repo at `<tmp>/<name>` sharing the same
+    /// remote (`../remote`), e.g. an alpha.1 clone next to one that gets migrated.
+    pub fn copy_repo(&self, name: &str) -> Repo {
+        let dst = self.repo.tmp.path().join(name);
+        let o = Command::new("cp")
+            .arg("-a")
+            .arg(&self.repo.root)
+            .arg(&dst)
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "cp: {o:?}");
+        let aux = self.repo.tmp.path().join(format!("{name}-aux"));
+        fs::create_dir_all(&aux).unwrap();
+        // Repo owns a TempDir; give the copy its own (empty) one and point root at the copy.
+        Repo {
+            tmp: tempfile::tempdir().unwrap(),
+            root: dst,
+            aux,
+        }
+    }
+}
+
+impl Default for Fixture {
+    fn default() -> Self {
+        Fixture::new()
+    }
+}
+
+impl Repo {
+    /// `pollard <args>` with extra env vars (set after cmd_in strips POLLARD_*).
+    pub fn po_env(&self, env: &[(&str, &str)], args: &[&str]) -> Out {
+        let mut c = self.cmd_in(&self.root, &bin(), args);
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        self.exec(c)
+    }
+
+    /// Run another pollard binary (e.g. the published alpha.1) in this working copy.
+    pub fn po_with(&self, program: &Path, args: &[&str]) -> Out {
+        self.exec(self.cmd_in(&self.root, program, args))
+    }
+
+    /// The format-2 database (`.pollard/state.sqlite`).
+    pub fn state_db(&self) -> PathBuf {
+        self.root.join(".pollard/state.sqlite")
+    }
+
+    /// `sqlite3` query against the format-2 database; `|`-separated rows.
+    pub fn sql(&self, q: &str) -> String {
+        sql(&self.state_db(), q)
+    }
+
+    /// `PRAGMA user_version` of `.pollard/state.sqlite`.
+    pub fn user_version(&self) -> i64 {
+        self.sql("PRAGMA user_version;").trim().parse().unwrap()
+    }
+
+    /// `(status, pruned_at or "")` of one node, from the format-2 database.
+    pub fn status_of(&self, id: &str) -> (String, String) {
+        let row = self.sql(&format!(
+            "SELECT status, coalesce(pruned_at, '') FROM nodes WHERE id='{id}';"
+        ));
+        let (s, p) = row
+            .trim()
+            .split_once('|')
+            .unwrap_or_else(|| panic!("node {id} not in state.sqlite: {row:?}"));
+        (s.to_string(), p.to_string())
+    }
+
+    /// Byte-and-mtime state of every file and directory under `.pollard/`.
+    pub fn dot_state(&self) -> std::collections::BTreeMap<String, FileState> {
+        file_state(&self.root.join(".pollard"))
+    }
+}
+
+/// Run `sqlite3 -batch <db> <q>` and return stdout; panics on error.
+pub fn sql(db: &Path, q: &str) -> String {
+    let o = Command::new("sqlite3")
+        .arg("-batch")
+        .arg(db)
+        .arg(q)
+        .output()
+        .expect("sqlite3 must be installed for the phase-1 tests");
+    assert!(
+        o.status.success(),
+        "sqlite3 {} {q:?}: {}",
+        db.display(),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    String::from_utf8_lossy(&o.stdout).into_owned()
+}
+
+/// `sqlite3` that may fail: `(ok, stdout+stderr)`.
+pub fn sql_try(db: &Path, q: &str) -> (bool, String) {
+    let o = Command::new("sqlite3")
+        .arg("-batch")
+        .arg(db)
+        .arg(q)
+        .output()
+        .expect("sqlite3");
+    (
+        o.status.success(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        ),
+    )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileState {
+    Dir,
+    File {
+        bytes: Vec<u8>,
+        mtime: Option<std::time::SystemTime>,
+    },
+}
+
+/// Every file (bytes + mtime) and directory under `dir`, keyed by relative path.
+pub fn file_state(dir: &Path) -> std::collections::BTreeMap<String, FileState> {
+    fn go(base: &Path, d: &Path, m: &mut std::collections::BTreeMap<String, FileState>) {
+        let Ok(rd) = fs::read_dir(d) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            let rel = p.strip_prefix(base).unwrap().display().to_string();
+            if p.is_dir() {
+                m.insert(rel, FileState::Dir);
+                go(base, &p, m);
+            } else {
+                let mtime = p.metadata().ok().and_then(|x| x.modified().ok());
+                m.insert(
+                    rel,
+                    FileState::File {
+                        bytes: fs::read(&p).unwrap_or_default(),
+                        mtime,
+                    },
+                );
+            }
+        }
+    }
+    let mut m = std::collections::BTreeMap::new();
+    go(dir, dir, &mut m);
+    m
+}
+
+/// Human-readable difference between two `file_state` snapshots (empty = identical).
+pub fn state_diff(
+    a: &std::collections::BTreeMap<String, FileState>,
+    b: &std::collections::BTreeMap<String, FileState>,
+) -> String {
+    let mut out = String::new();
+    for (k, v) in a {
+        match b.get(k) {
+            None => out += &format!("removed {k}\n"),
+            Some(w) if w != v => out += &format!("changed {k}\n"),
+            _ => {}
+        }
+    }
+    for k in b.keys() {
+        if !a.contains_key(k) {
+            out += &format!("added {k}\n");
+        }
+    }
+    out
+}
+
+/// Same, ignoring mtimes and SQLite's transient `-wal`/`-shm` files: "changes nothing" in
+/// content terms.
+pub fn content_diff(
+    a: &std::collections::BTreeMap<String, FileState>,
+    b: &std::collections::BTreeMap<String, FileState>,
+) -> String {
+    let strip = |m: &std::collections::BTreeMap<String, FileState>| {
+        m.iter()
+            .filter(|(k, _)| !k.ends_with("-wal") && !k.ends_with("-shm"))
+            .map(|(k, v)| {
+                let v = match v {
+                    FileState::File { bytes, .. } => FileState::File {
+                        bytes: bytes.clone(),
+                        mtime: None,
+                    },
+                    d => d.clone(),
+                };
+                (k.clone(), v)
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    state_diff(&strip(a), &strip(b))
+}
+
+/// A format-2 working copy (`Repo::init`) whose config points at `remote`.
+pub fn init_with_remote(remote: &Path) -> Repo {
+    let r = Repo::init();
+    r.set_config("remote", &format!("{:?}", remote.display().to_string()));
+    r
+}
+
+/// Drop the ` (@)` marker so trees from different clones compare equal.
+pub fn strip_at(tree: &str) -> String {
+    tree.replace(" (@)", "")
+}
+
+/// Every node id in `.pollard/state.sqlite`, sorted.
+pub fn node_ids(r: &Repo) -> Vec<String> {
+    r.sql("SELECT id FROM nodes ORDER BY id;")
+        .lines()
+        .map(String::from)
+        .collect()
+}
+
+/// Byte-for-byte difference (every file, `-wal`/`-shm` included; mtimes ignored).
+pub fn bytes_diff(
+    a: &std::collections::BTreeMap<String, FileState>,
+    b: &std::collections::BTreeMap<String, FileState>,
+) -> String {
+    let strip = |m: &std::collections::BTreeMap<String, FileState>| {
+        m.iter()
+            .map(|(k, v)| {
+                let v = match v {
+                    FileState::File { bytes, .. } => FileState::File {
+                        bytes: bytes.clone(),
+                        mtime: None,
+                    },
+                    d => d.clone(),
+                };
+                (k.clone(), v)
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    state_diff(&strip(a), &strip(b))
+}

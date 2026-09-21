@@ -1,0 +1,2 @@
+lapsed-quail-1 [root-pin]  done  root
+└─ daring-rye-2  done  base

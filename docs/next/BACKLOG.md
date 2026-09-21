@@ -1,7 +1,7 @@
 # pollard 0.2.0-alpha.1: product backlog
 
 Owner: PO. Companions: `docs/next/PLAN.md` (PM: scope, schedule), `docs/next/TECH.md` (Lead: approach).
-Source of truth for intent: owner decisions on #11, #13, #17, #19 (issue comments, 2026-09-19). Where this file and PLAN/TECH differ, see "Open contradictions" at the end.
+Source of truth for intent: owner decisions on #11, #13, #17, #19 (issue comments, 2026-09-19). Where this file and PLAN/TECH differ, see "Open owner decision" at the end.
 
 Priority: **P0** data loss or data hiding, blocks release. **P1** daily-workflow friction, ships unless the schedule breaks. **P2** polish, cuttable within its phase.
 Every acceptance box is written to be checked by an integration test that drives the `pollard`/`po` binary (the `crates/pollard-cli/tests/` style), unless marked *(CI-only)* or *(manual)*. `$` lines are commands; indented lines are expected output. Output marked *exact* is asserted byte-for-byte (except ids, paths, counts and sizes shown as `<…>`); the rest is asserted by content.
@@ -147,7 +147,7 @@ As a team, I want two people pushing at the same moment to both land, so that no
 - [ ] Two clones A and B of one repo, one local-path remote. 20 rounds: in each, A and B each create one node and then push at the same time (both binaries spawned before either is waited on). Then A, B and a fresh clone C each `pull`: all three have every node from both (base + 40), with identical `po tree --all`.
 - [ ] Same test with each round's pushes carrying a checkpoint: every node's weights are fetchable (`po fork <id> --step N` in C restores a byte-identical file for a sample of 5 nodes).
 - [ ] The same suite runs against MinIO in phase 2 (B12).
-- [ ] Pins under concurrency follow D-29 last-writer-wins on the whole pin map, and a test pins that behaviour (A pins `x`, B pins `y`, concurrent push: the result is exactly A's or B's map, never a mix or an error). See contradiction C4.
+- [ ] Pins under concurrency *(per D19 default, pending owner)*: each pin add or remove is its own segment record (`{"pin": [node_id, name|null], "removed": bool}`), replayed in segment order. Test: A pins `x` (named `ax`) and unpins `old-a`; B pins `y` (named `by`) and unpins `old-b`; A and B push at the same time; after A, B and a fresh C `pull`, all three have `ax → x` and `by → y`, and neither `old-a` nor `old-b`. Only two changes to the *same* pin are last-writer-wins by segment order (test: A and B both set name `best`, on different nodes; after pull all clones agree on one of them, no error).
 
 ### F11. alpha.1 binaries fail loudly on a converted remote · P0
 
@@ -384,20 +384,12 @@ As an alpha.1 user, I want clear upgrade notes and a tested upgrade path, so tha
 | `gc` freeing Tier-1 objects | Disk only, no data at risk; needs its own careful design. |
 | Undo across the migration; rolling a converted remote back to alpha.1 | Owner decision: one-way upgrade with a local backup; everyone on a remote upgrades together. |
 | Remote segment compaction | One small segment per push is fine at alpha scale. |
-| Per-pin merge on the remote | D-29 last-writer-wins stays (see C4). |
 | Storing "resumed" or showing it in `--json` | Owner: derived label only. |
 | Interactive TUI, web UI, Windows | Owner chose terminal polish; SPEC §11 non-goals. |
 | sdk/hydra blocking duplicate check | By design (L-5); a run-protocol change. |
 
 ---
 
-## Open contradictions (for PM / Lead)
+## Open owner decision
 
-- **C1.** PLAN §2 "In", §3 N6 and D15, and TECH §4 phase 4, still schedule SPEC §12 tag/stat (cuttable). The owner deferred it. N6 becomes X1 only.
-- **C2.** PLAN §2 "Deferred" (#19 extras) and TECH N2 "Extras" say `prune --failed` is skipped. The owner put `--failed`/`--killed [<node>]` in scope (B5). Needs a size in TECH (my guess: S–M on top of B1–B3).
-- **C3.** The derived "resumed" label (B7) is in neither PLAN nor TECH.
-- **C4.** "Two clones pushing at once lose nothing": TECH 1b fixes node lines, but pins stay whole-map last-writer-wins, so concurrent pin edits from two clones can still drop one clone's pins. F10 tests node lines and pins today's LWW. If the owner means pins too, pins need per-pin records in segments (small, still phase 1).
-- **C5.** Backup/rollback: TECH 1a both `VACUUM INTO` the backup and "moves the old file to backup/"; the repo runs SQLite in WAL mode, so a moved `db.sqlite` without its `-wal` can miss recent writes. The backup must be a standalone copy (F3). PLAN §4's rollback command removes `state.sqlite` but not `state.sqlite-wal`/`-shm`; a stale WAL next to a re-migrated `state.sqlite` is a corruption risk. Use `state.sqlite*` (F3).
-- **C6.** PLAN N1 says undo after migration "refuses, or undoes only post-migration ops"; F5 fixes it: undo within post-migration ops works, any request that would cross is refused whole.
-- **C7.** Hydra stale-config is P0 in PLAN §2 but sits in N3 (PLAN) / the N6 table (TECH); B11 puts it in phase 2. Cosmetic.
-- **C8.** PLAN keeps `prune` without protection/preview during phase 1; the phase-1 contract above makes that explicit (subtree shape, flag instead of status) so phase-1 tests don't depend on B1–B3.
+- **D19 (was C4).** "Two clones pushing at once lose nothing": does it cover pins? Default (PLAN D19, TECH 1b), built unless the owner says otherwise before F9 starts: yes, one remote record per pin change, so concurrent pin edits from both clones survive (F10). Alternative: D-29 last-writer-wins on the whole pin map, in which case F10's pin box becomes "the result is exactly A's or B's map".

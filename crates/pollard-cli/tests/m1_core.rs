@@ -10,10 +10,12 @@ fn init_creates_repo_layout_and_gitignore_entry() {
     r.write(".gitignore", "target/\n");
     r.ok(&["init"]);
     assert!(r.root.join(".pollard").is_dir(), ".pollard/ missing");
+    // format 2: the database is state.sqlite; db.sqlite is a stub dir that stops 0.1 binaries
     assert!(
-        r.root.join(".pollard/db.sqlite").is_file(),
-        ".pollard/db.sqlite missing (§3)"
+        r.root.join(".pollard/state.sqlite").is_file(),
+        ".pollard/state.sqlite missing (§3)"
     );
+    assert!(r.root.join(".pollard/db.sqlite").is_dir());
     let gi = r.read(".gitignore");
     assert!(
         gi.contains("target/"),
